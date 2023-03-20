@@ -1,4 +1,11 @@
-struct Class
+
+function new(name; kwargs...)
+    c = name()
+    for k in kwargs
+        key = k.first
+        setproperty!(c, key, k.second)
+    end
+    return c
 end
 
 macro defclass(name, superclasses, slots)
@@ -12,31 +19,13 @@ macro defclass(name, superclasses, slots)
             # name::String = $namec
             # superclasses::Vector{Class} = superclasses    # Type class?
             $(slot_names...)
+            $name() = new()
         end
 
-        @eval function new(c::Type{$name}; slots_values...)::$name
-            instance = c(0, 0)
-            for slot_pair in slots_values
-                slot_name = slot_pair.first
-                slot_value = slot_pair.second
-                setproperty!(instance, slot_name, slot_value)
-            end
-
-            dump(slots_values...)
-            return instance
-        end
+        global $name = $name
     end
 end
 
 
 @defclass(TestClass1, [], [foo, bar])
-
-instance = new(TestClass1, foo=2)
-
-instance
-
-
-@defclass(TestClass2, [], [foo, bar, foobar])
-
-instance = new(TestClass2, foo=2)
-
+c = new(TestClass1, foo=5, bar=6)
