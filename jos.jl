@@ -1,3 +1,19 @@
+################################################################################################################
+#                                        CLASSES                                                               #
+################################################################################################################
+abstract type Class end
+struct ClassDef <: Class
+    name::Symbol
+    direct_superclasses::Vector{Class}
+    direct_slots::Vector{Symbol}
+end
+
+# @defmethod print_object(class::Class, io) =
+#     print(io, "<$(class_name(class_of(class))) $(class_name(class))>")
+
+# function class_of(instance)
+#   
+# end
 
 function new(name; kwargs...)
     c = name()
@@ -22,10 +38,47 @@ macro defclass(name, superclasses, slots)
             $name() = new()
         end
 
+        #global $name = Class($name, $superclasses, $slot_names)
         global $name = $name
     end
 end
 
 
+################################################################################################################
+#                                        METHODS                                                               #
+################################################################################################################
+macro defgeneric(definition)
+    name = definition.args[1]
+    args = definition.args[2:end]
+    
+    quote
+        # Create a new generic function with the given name and arguments
+        function $name($(args...))
+        end
+    end |> esc
+end
+
+macro defmethod(definition)
+    name = definition.args[1].args[1]
+    args = definition.args[1].args[2:end]
+    body = definition.args[2]
+
+    quote
+        @eval function $name($(args...))
+            $body
+        end
+    end
+end
+
+
+################################################################################################################
+#                                          Testing                                                             #
+################################################################################################################
+
+@macroexpand @defclass(TestClass1, [], [foo, bar])
 @defclass(TestClass1, [], [foo, bar])
 c = new(TestClass1, foo=5, bar=6)
+@defgeneric add(a,b)
+
+@defmethod add(a::TestClass1, b::TestClass1) = println(c, c)
+println(add(c, c))
