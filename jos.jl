@@ -39,15 +39,27 @@ Object = Class(:Object, [], [])
 # Class
 # Class = Class(:Class, [Object], [])
 
+## General utilites (probably not going into macros)
+get_field_index(instance::Instance, slot_name::Symbol) =
+    findfirst(==(slot_name), instance.metaclass.direct_slots)
+
+## Accessors (going into macros)
+function getproperty(instance::Instance, slot_name::Symbol)
+    idx = get_field_index(instance, slot_name)
+    instance.values[idx]
+end
+
+ComplexNumber = Class(:ComplexNumber, [Object], [:real, :img])
+ist = new(ComplexNumber, img=2)
+
+getproperty(ist, :real)
 
 
 ## =======
 ## TESTING
 ## =======
 
-ComplexNumber = Class(:ComplexNumber, [Object], [:real, :img])
 
-ist = new(ComplexNumber, img=2)
 
 dump(ComplexNumber)
 
