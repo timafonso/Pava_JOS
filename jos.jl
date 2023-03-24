@@ -1,84 +1,53 @@
-################################################################################################################
-#                                        CLASSES                                                               #
-################################################################################################################
-abstract type Class end
-struct ClassDef <: Class
+struct Class
     name::Symbol
     direct_superclasses::Vector{Class}
     direct_slots::Vector{Symbol}
+    # cpl::Vector{Class}
 end
 
-# @defmethod print_object(class::Class, io) =
-#     print(io, "<$(class_name(class_of(class))) $(class_name(class))>")
+struct Instance
+    metaclass::Class
+    values::Vector
+    Instance(metaclass) = new(metaclass, [])
+end
 
-# function class_of(instance)
-#   
-# end
-
-function new(name; kwargs...)
-    c = name()
-    for k in kwargs
-        key = k.first
-        setproperty!(c, key, k.second)
+## Instances
+new(class; initargs...) =
+    let instance = allocate_instance(class)
+        initialize(instance, initargs)
+        instance
     end
-    return c
-end
 
-macro defclass(name, superclasses, slots)
-    # typeof(name) == Symbol ? nothing : throw(ArgumentError("Invalid class name type, expected Symbol."))
-    # superclasses.head == Vector ? nothing : throw(ArgumentError("Invalid super class collection, expected Vector{Class} "))
-    # slots.head == Vector ? nothing : throw(ArgumentError("Invalid slots collection, expected Vector{Symbol} "))
+allocate_instance(class::Class) = Instance(class)
 
-    slot_names = slots.args
-    quote
-        @eval mutable struct $name
-            # name::String = $namec
-            # superclasses::Vector{Class} = superclasses    # Type class?
-            $(slot_names...)
-            $name() = new()
-        end
-
-        #global $name = Class($name, $superclasses, $slot_names)
-        global $name = $name
+function initialize(instance::Instance, initargs)
+    # TODO handle UndefKeywordError with our own exception
+    for slot_name in instance.metaclass.direct_slots
+        value = get(initargs, slot_name, missing)
+        push!(instance.values, value)
     end
 end
 
 
-################################################################################################################
-#                                        METHODS                                                               #
-################################################################################################################
-macro defgeneric(definition)
-    name = definition.args[1]
-    args = definition.args[2:end]
-    
-    quote
-        # Create a new generic function with the given name and arguments
-        function $name($(args...))
-        end
-    end |> esc
-end
+## Bootstraping
 
-macro defmethod(definition)
-    name = definition.args[1].args[1]
-    args = definition.args[1].args[2:end]
-    body = definition.args[2]
+# Top
 
-    quote
-        @eval function $name($(args...))
-            $body
-        end
-    end
-end
+# Object
+Object = Class(:Object, [], [])
+
+# Class
+# Class = Class(:Class, [Object], [])
 
 
-################################################################################################################
-#                                          Testing                                                             #
-################################################################################################################
 
-@macroexpand @defclass(TestClass1, [], [foo, bar])
-@defclass(TestClass1, [], [foo, bar])
-c = new(TestClass1, foo=5, bar=6)
-@defgeneric add(a,b)
+## =======
+## TESTING
+## =======
 
-@defmethod add(a::TestClass1, b::TestClass1) = println(c, c)
-println(add(c, c))
+ComplexNumber = Class(:ComplexNumber, [Object], [:real, :img])
+
+ist = new(ComplexNumber, img=2)
+
+dump(ComplexNumber)
+
