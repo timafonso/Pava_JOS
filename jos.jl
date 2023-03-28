@@ -82,6 +82,19 @@ new(class; initargs...) =
 #                         GENERIC FUNCTIONS                        #
 ####################################################################
 
+GenericFunction = new(Class, direct_superclasses=[Object], direct_slots=[:name, :args, :methods])
+MultiMethod = new(Class, direct_superclasses=[Object], direct_slots=[:specializers, :procedure, :generic_function])
+
+function call_effective_method(f, args)
+    
+    
+end
+
+(f::Instance)(args...) = call_effective_method(f, args...)
+
+
+func = new(GenericFunction, name=:func, args=[:a,:b], methods=[])
+
 
 ####################################################################
 
