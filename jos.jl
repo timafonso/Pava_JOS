@@ -74,13 +74,21 @@ function class_of(instance::Instance)
 end
 
 function Base.getproperty(instance::Instance, slot_name::Symbol)
-    idx = get_field_index(instance, slot_name)
-    getfield(instance, :slots)[idx]
+    if hasfield(Instance, slot_name)
+        getfield(instance, slot_name)
+    else
+        idx = get_field_index(instance, slot_name)
+        getfield(instance, :slots)[idx]
+    end
 end
 
 function Base.setproperty!(instance::Instance, slot_name::Symbol, value)
-    idx = get_field_index(instance, slot_name)
-    getfield(instance, :slots)[idx] = value
+    if hasfield(Instance, slot_name)
+        setfield!(instance, slot_name, value)
+    else
+        idx = get_field_index(instance, slot_name)
+        getfield(instance, :slots)[idx] = value
+    end
 end
 
 ####################################################################
@@ -147,15 +155,15 @@ GenericFunction = new(Class, direct_superclasses=[Object], direct_slots=[:name, 
 MultiMethod = new(Class, direct_superclasses=[Object], direct_slots=[:specializers, :procedure, :generic_function])
 
 function create_method(generic_function, specializers, procedure)
-    (length(generic_function.args) == length(specializers)) || error("Wrong specializers for generic function.") 
-    
+    (length(generic_function.args) == length(specializers)) || error("Wrong specializers for generic function.")
+
     multi_method = new(MultiMethod, specializers=specializers, procedure=procedure, generic_function=generic_function)
-    push!(generic_function.methods, multi_method) 
+    push!(generic_function.methods, multi_method)
 end
 
 function call_effective_method(generic_f, args)
-    (length(generic_f.args) == length(args)) || error("Wrong arguments for generic function.") 
-    
+    (length(generic_f.args) == length(args)) || error("Wrong arguments for generic function.")
+
     for method in generic_f.methods
         if (all(method.specializers .== class_of.(args)))
             return method.procedure(args...)
@@ -198,10 +206,10 @@ ComplexNumber.direct_superclasses == [Num, Object]
 # Code for macros (generic function and methods)
 ####################################################################
 if (!@isdefined add)
-    global add = new(GenericFunction, name=:add, args=[:x,:y], methods=[])
+    global add = new(GenericFunction, name=:add, args=[:x, :y], methods=[])
 end
 ####################################################################
-create_method(add, [ComplexNumber, ComplexNumber], (a,b)->(new(ComplexNumber, real=(a.real + b.real), img=(a.img + b.img))))
+create_method(add, [ComplexNumber, ComplexNumber], (a, b) -> (new(ComplexNumber, real=(a.real + b.real), img=(a.img + b.img))))
 
 c1 = add(Comp1, Comp2)
 c1.img
