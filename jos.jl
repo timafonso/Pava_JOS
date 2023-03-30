@@ -115,6 +115,8 @@ function initialize(instance::Instance, initargs)
         push!(getfield(instance, :slots), value)
     end
 
+    # TODO change this to generic function of Class
+
     if getfield(instance, :class) == Class
         cpl = compute_cpl(instance)
         setproperty!(instance, CLASS_CPL, cpl)
@@ -145,15 +147,26 @@ GenericFunction = new(Class, direct_superclasses=[Object], direct_slots=[:name, 
 MultiMethod = new(Class, direct_superclasses=[Object], direct_slots=[:specializers, :procedure, :generic_function])
 
 function create_method(generic_function, specializers, procedure)
+    (length(generic_function.args) == length(specializers)) || error("Wrong specializers for generic function.") 
+    
     multi_method = new(MultiMethod, specializers=specializers, procedure=procedure, generic_function=generic_function)
     push!(generic_function.methods, multi_method) 
 end
 
-function call_effective_method(f, args)
-    f.methods[1].procedure(args[1], args[2])
+function call_effective_method(generic_f, args)
+    (length(generic_f.args) == length(args)) || error("Wrong arguments for generic function.") 
+    
+    for method in generic_f.methods
+        if (all(method.specializers .== class_of.(args)))
+            return method.procedure(args...)
+        end
+    end
+
+    error("No effective method found.")
+    # TODO cpl
 end
 
-(f::Instance)(args...) = call_effective_method(f, args)
+(generic_f::Instance)(args...) = call_effective_method(generic_f, args)
 
 
 func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
