@@ -144,12 +144,16 @@ new(class; initargs...) =
 GenericFunction = new(Class, direct_superclasses=[Object], direct_slots=[:name, :args, :methods])
 MultiMethod = new(Class, direct_superclasses=[Object], direct_slots=[:specializers, :procedure, :generic_function])
 
-function call_effective_method(f, args)
-
-
+function create_method(generic_function, specializers, procedure)
+    multi_method = new(MultiMethod, specializers=specializers, procedure=procedure, generic_function=generic_function)
+    push!(generic_function.methods, multi_method) 
 end
 
-(f::Instance)(args...) = call_effective_method(f, args...)
+function call_effective_method(f, args)
+    f.methods[1].procedure(args[1], args[2])
+end
+
+(f::Instance)(args...) = call_effective_method(f, args)
 
 
 func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
@@ -158,18 +162,35 @@ func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
 ####################################################################
 
 
+
+####################################################################
+#                               TESTING                            #
+####################################################################
+
+# Creating a class
 Num = new(Class, name=:Number, direct_superclasses=[Object], direct_slots=[:value])
+# Creating a class that inherits from the previous 
 ComplexNumber = new(Class, name=:ComplexNumber, direct_superclasses=[Num, Object], direct_slots=[:real, :img])
-ist = new(ComplexNumber, img=1, value=27, real=3)
-dump(ist)
 
-class_of(Class) == Class
+Comp1 = new(ComplexNumber, real=1, img=1)
+Comp2 = new(ComplexNumber, real=2, img=2)
 
-getproperty(ist, :img)
-getproperty(ist, :real)
-ist.real
-ist.real += 5
-ist.value
-setproperty!(ist, :real, 5634753645763485863)
-getproperty(ist, :real)
+# Creating an instance of the previous class and verifying and updating its values
+
+ComplexNumber.direct_slots
+ComplexNumber.name
+ComplexNumber.direct_superclasses == [Num, Object]
+
+####################################################################
+# Code for macros (generic function and methods)
+####################################################################
+if (!@isdefined add)
+    global add = new(GenericFunction, name=:add, args=[:x,:y], methods=[])
+end
+####################################################################
+create_method(add, [ComplexNumber, ComplexNumber], (a,b)->(new(ComplexNumber, real=(a.real + b.real), img=(a.img + b.img))))
+
+c1 = add(Comp1, Comp2)
+c1.img
+c1.real
 
