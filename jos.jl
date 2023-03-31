@@ -20,8 +20,6 @@ end
 
 #---------------------- Class & Object -----------------------------
 Class = Instance()
-# Class.class = Class
-# Class.slots = []
 
 Top = Instance(Class)
 Object = Instance(Class)
@@ -171,16 +169,12 @@ function create_method(generic_function, specializers, procedure)
     push!(generic_function.methods, multi_method)
 end
 
-<<<<<<< Updated upstream
-function call_effective_method(generic_f, args)
-    (length(generic_f.args) == length(args)) || error("Wrong arguments for generic function.")
-=======
 function get_method_similarity(method, arg_types)
     similarity = 0
 
     for (specializer, arg_type) in zip(method.specializers, arg_types)
-        cpl = specializer.cpl
-        idx = findfirst(==(arg_type), cpl)
+        cpl = arg_type.cpl
+        idx = findfirst(==(specializer), cpl)
 
         if(idx === nothing)
             return nothing
@@ -194,10 +188,9 @@ end
 
 function get_applicable_methods(generic_f, arg_types)
     applicable_methods = []
->>>>>>> Stashed changes
 
     for method in generic_f.methods
-        if !(get_method_similarity(method, arg_types) === nothing)
+        if (!(get_method_similarity(method, arg_types) === nothing))
             push!(applicable_methods, method)
         end
     end
@@ -215,17 +208,18 @@ function call_effective_method(generic_f, args)
     
     best_method = nothing
     best_similarity = nothing
-    for method in generic_f.methods
+    for method in applicable_methods
         similarity = get_method_similarity(method, arg_types)
-        if ( (best_similarity === nothing) || (!(similarity === nothing) && similarity < best_similarity) )
+        if ( (best_similarity === nothing) || (similarity < best_similarity) )
             best_method = method
             best_similarity = similarity
         end
     end
 
     if (best_method === nothing)
-        error("No effective method found.")
+        error("ERROR: No applicable method for function $(generic_f.name) with arguments $(args)")
     end
+    
     best_method.procedure(args...)
 end
 
@@ -253,38 +247,33 @@ end
 #                               TESTING                            #
 ####################################################################
 
-# Creating a class
-Num = new(Class, name=:Number, direct_superclasses=[Object], direct_slots=[:value])
-# Creating a class that inherits from the previous 
-ComplexNumber = new(Class, name=:ComplexNumber, direct_superclasses=[Num, Object], direct_slots=[:real, :img])
+Shape = new(Class, direct_superclasses=[Object], direct_slots=[:name, :args, :methods])
+Device = new(Class, direct_superclasses=[Object], direct_slots=[:name, :args, :methods])
+Line = new(Class, direct_superclasses=[Shape, Object], direct_slots=[:from, :to])
+Circle = new(Class, direct_superclasses=[Shape, Object], direct_slots=[:center, :radius])
+Screen = new(Class, direct_superclasses=[Device, Object], direct_slots=[])
+Printer = new(Class, direct_superclasses=[Device, Object], direct_slots=[])
 
-Comp1 = new(ComplexNumber, real=1, img=1)
-Comp2 = new(ComplexNumber, real=2, img=2)
-Numb1 = new(Num, value=30)
+draw = new(GenericFunction, name=:draw, args=[:shape, :device], methods=[])
+create_method(draw, [Line, Screen], (l, s)->println("Drawing a Line on Screen"))
+create_method(draw, [Circle, Screen], (c, s)->println("Drawing a Circle on Screen"))
+create_method(draw, [Line, Printer], (l, p)->println("Drawing a Line on Printer"))
+create_method(draw, [Circle, Printer], (c, p)->println("Drawing a Circle on Printer"))
 
-# Creating an instance of the previous class and verifying and updating its values
-
-ComplexNumber.direct_slots
-ComplexNumber.name
-ComplexNumber.direct_superclasses == [Num, Object]
-
-####################################################################
-# Code for macros (generic function and methods)
-####################################################################
-if (!@isdefined add)
-    global add = new(GenericFunction, name=:add, args=[:x, :y], methods=[])
+let devices = [new(Screen), new(Printer)],
+    shapes = [new(Line), new(Circle)]
+    for device in devices
+        for shape in shapes
+            draw(shape, device)
+        end
+    end
 end
+
 ####################################################################
-<<<<<<< Updated upstream
-create_method(add, [ComplexNumber, ComplexNumber], (a, b) -> (new(ComplexNumber, real=(a.real + b.real), img=(a.img + b.img))))
-=======
-create_method(add, [Num, Num], (a,b)->(println("Only numbers")))
-create_method(add, [ComplexNumber, Num], (a,b)->(println("complex numbers and num")))
->>>>>>> Stashed changes
+#                       Expected Result                            #
+####################################################################
 
-c1 = add(Comp1, Comp2)
-c2 = add(Numb1, Numb1)
-c3 = add(Comp1, Numb1)
-
-Class.cpl
-Num.cpl
+#Drawing a Line on Screen
+#Drawing a Circle on Screen
+#Drawing a Line on Printer
+#Drawing a Circle on Printer
