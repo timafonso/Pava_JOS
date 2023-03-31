@@ -23,17 +23,23 @@ Class = Instance()
 # Class.class = Class
 # Class.slots = []
 
+Top = Instance(Class)
 Object = Instance(Class)
 
 push!(Class.slots, :Class)              # name
 push!(Class.slots, [Object])            # superclasses
 push!(Class.slots, CLASS_SLOTS)         # direct slots
-push!(Class.slots, [Class, Object])     # cpl
+push!(Class.slots, [Class, Object, Top])     # cpl
+
+push!(Top.slots, :Top)                  # name
+push!(Top.slots, [])                 # superclasses
+push!(Top.slots, [])                 # direct slots
+push!(Top.slots, [Top])              # cpl
 
 push!(Object.slots, :Object)            # name
-push!(Object.slots, [])                 # superclasses
+push!(Object.slots, [Top])              # superclasses
 push!(Object.slots, [])                 # direct slots
-push!(Class.slots, [Object])     # cpl
+push!(Object.slots, [Object, Top])           # cpl
 
 
 ####################################################################
@@ -69,8 +75,12 @@ function get_field_index(instance::Instance, slot_name::Symbol)
     findfirst(==(slot_name), get_all_slots(getfield(instance, :class)))
 end
 
-function class_of(instance::Instance)
-    getfield(instance, :class)
+function class_of(instance)
+    if (typeof(instance) == Instance)
+        return getfield(instance, :class)
+    end        
+
+    Top
 end
 
 function Base.getproperty(instance::Instance, slot_name::Symbol)
@@ -161,17 +171,62 @@ function create_method(generic_function, specializers, procedure)
     push!(generic_function.methods, multi_method)
 end
 
+<<<<<<< Updated upstream
 function call_effective_method(generic_f, args)
     (length(generic_f.args) == length(args)) || error("Wrong arguments for generic function.")
+=======
+function get_method_similarity(method, arg_types)
+    similarity = 0
+
+    for (specializer, arg_type) in zip(method.specializers, arg_types)
+        cpl = specializer.cpl
+        idx = findfirst(==(arg_type), cpl)
+
+        if(idx === nothing)
+            return nothing
+        end
+
+        similarity += idx
+    end
+
+    similarity
+end
+
+function get_applicable_methods(generic_f, arg_types)
+    applicable_methods = []
+>>>>>>> Stashed changes
 
     for method in generic_f.methods
-        if (all(method.specializers .== class_of.(args)))
-            return method.procedure(args...)
+        if !(get_method_similarity(method, arg_types) === nothing)
+            push!(applicable_methods, method)
         end
     end
 
-    error("No effective method found.")
-    # TODO cpl
+    applicable_methods
+end
+
+
+function call_effective_method(generic_f, args)
+    (length(generic_f.args) == length(args)) || error("Wrong arguments for generic function.")
+
+    arg_types = class_of.(args)
+    applicable_methods = get_applicable_methods(generic_f, arg_types)
+
+    
+    best_method = nothing
+    best_similarity = nothing
+    for method in generic_f.methods
+        similarity = get_method_similarity(method, arg_types)
+        if ( (best_similarity === nothing) || (!(similarity === nothing) && similarity < best_similarity) )
+            best_method = method
+            best_similarity = similarity
+        end
+    end
+
+    if (best_method === nothing)
+        error("No effective method found.")
+    end
+    best_method.procedure(args...)
 end
 
 (generic_f::Instance)(args...) = call_effective_method(generic_f, args)
@@ -182,6 +237,16 @@ func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
 
 ####################################################################
 
+####################################################################
+#                        PRE-DEFINED METHODS                       #
+####################################################################
+global print_object = new(GenericFunction, name=:print_object, args=[:obj, :io], methods=[])
+create_method(print_object, [Object, Top], (obj, io)->(print(io, "<$((class_of(obj)).name) $(string(objectid(obj), base=62))>")))
+
+function Base.show(io::IO, obj::Instance)
+    print_object(obj, io)
+end
+####################################################################
 
 
 ####################################################################
@@ -195,6 +260,7 @@ ComplexNumber = new(Class, name=:ComplexNumber, direct_superclasses=[Num, Object
 
 Comp1 = new(ComplexNumber, real=1, img=1)
 Comp2 = new(ComplexNumber, real=2, img=2)
+Numb1 = new(Num, value=30)
 
 # Creating an instance of the previous class and verifying and updating its values
 
@@ -209,9 +275,16 @@ if (!@isdefined add)
     global add = new(GenericFunction, name=:add, args=[:x, :y], methods=[])
 end
 ####################################################################
+<<<<<<< Updated upstream
 create_method(add, [ComplexNumber, ComplexNumber], (a, b) -> (new(ComplexNumber, real=(a.real + b.real), img=(a.img + b.img))))
+=======
+create_method(add, [Num, Num], (a,b)->(println("Only numbers")))
+create_method(add, [ComplexNumber, Num], (a,b)->(println("complex numbers and num")))
+>>>>>>> Stashed changes
 
 c1 = add(Comp1, Comp2)
-c1.img
-c1.real
+c2 = add(Numb1, Numb1)
+c3 = add(Comp1, Numb1)
 
+Class.cpl
+Num.cpl
