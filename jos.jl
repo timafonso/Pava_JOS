@@ -39,7 +39,19 @@ push!(Object.slots, [Top])              # superclasses
 push!(Object.slots, [])                 # direct slots
 push!(Object.slots, [Object, Top])           # cpl
 
+#-------------- Generic Functions and Methods -----------------------
+GenericFunction = Instance(Class)
+MultiMethod = Instance(Class)
 
+push!(GenericFunction.slots, :GenericFunction)               # name
+push!(GenericFunction.slots, [Object])                       # superclasses
+push!(GenericFunction.slots, [:name, :args, :methods])       # direct slots
+push!(GenericFunction.slots, [GenericFunction, Object, Top]) # cpl
+
+push!(MultiMethod.slots, :MultiMethod)                                           # name
+push!(MultiMethod.slots, [Object])                                               # superclasses
+push!(MultiMethod.slots, [:specializers, :procedure, :generic_function])         # direct slots
+push!(MultiMethod.slots, [MultiMethod, Object, Top])                             # cpl
 ####################################################################
 
 ####################################################################
@@ -158,10 +170,6 @@ new(class; initargs...) =
 ####################################################################
 #                         GENERIC FUNCTIONS                        #
 ####################################################################
-
-GenericFunction = new(Class, direct_superclasses=[Object], direct_slots=[:name, :args, :methods])
-MultiMethod = new(Class, direct_superclasses=[Object], direct_slots=[:specializers, :procedure, :generic_function])
-
 function create_method(generic_function, specializers, procedure)
     (length(generic_function.args) == length(specializers)) || error("Wrong specializers for generic function.")
 
@@ -234,8 +242,21 @@ func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
 ####################################################################
 #                        PRE-DEFINED METHODS                       #
 ####################################################################
+
+############################# Print ################################
 global print_object = new(GenericFunction, name=:print_object, args=[:obj, :io], methods=[])
+
+# Objects ----------------------------------------------------------
 create_method(print_object, [Object, Top], (obj, io)->(print(io, "<$((class_of(obj)).name) $(string(objectid(obj), base=62))>")))
+
+# Classes ----------------------------------------------------------
+create_method(print_object, [Class, Top], (cls, io)->(print(io, "<$(class_of(cls).name) $(cls.name)>")))
+
+# Generic Functions ------------------------------------------------
+create_method(print_object, [GenericFunction, Top], (gf, io)->(print(io, "<GenericFunction $(gf.name) with $(length(gf.methods)) methods>")))
+
+# Multi Methods ----------------------------------------------------
+create_method(print_object, [MultiMethod, Top], (mm, io)->(names = getproperty.(mm.specializers, :name); print(io, "<MultiMethod $(mm.generic_function.name)($(join(names, ", ")))>")))
 
 function Base.show(io::IO, obj::Instance)
     print_object(obj, io)
@@ -243,16 +264,22 @@ end
 ####################################################################
 
 
+
+
+
+####################################################################
+
+
 ####################################################################
 #                               TESTING                            #
 ####################################################################
 
-Shape = new(Class, direct_superclasses=[Object], direct_slots=[:name, :args, :methods])
-Device = new(Class, direct_superclasses=[Object], direct_slots=[:name, :args, :methods])
-Line = new(Class, direct_superclasses=[Shape, Object], direct_slots=[:from, :to])
-Circle = new(Class, direct_superclasses=[Shape, Object], direct_slots=[:center, :radius])
-Screen = new(Class, direct_superclasses=[Device, Object], direct_slots=[])
-Printer = new(Class, direct_superclasses=[Device, Object], direct_slots=[])
+Shape = new(Class, name=:Shape, direct_superclasses=[Object], direct_slots=[])
+Device = new(Class, name=:Device, direct_superclasses=[Object], direct_slots=[])
+Line = new(Class, name=:Line, direct_superclasses=[Shape, Object], direct_slots=[:from, :to])
+Circle = new(Class, name=:Circle, direct_superclasses=[Shape, Object], direct_slots=[:center, :radius])
+Screen = new(Class, name=:Screen, direct_superclasses=[Device, Object], direct_slots=[])
+Printer = new(Class, name=:Printer, direct_superclasses=[Device, Object], direct_slots=[])
 
 draw = new(GenericFunction, name=:draw, args=[:shape, :device], methods=[])
 create_method(draw, [Line, Screen], (l, s)->println("Drawing a Line on Screen"))
@@ -268,6 +295,10 @@ let devices = [new(Screen), new(Printer)],
         end
     end
 end
+
+Shape
+draw
+draw.methods[1]
 
 ####################################################################
 #                       Expected Result                            #
