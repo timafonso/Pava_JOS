@@ -12,6 +12,7 @@ mutable struct Instance
     slots::Vector{}  # In classes index 1 is superclasses and index 2 is direct slots, ...
     Instance() = (x = new(); x.class = x; x.slots = []; x)
     Instance(class) = new(class, [])
+    Instance(class, slots) = (x = new(); x.class = class; x.slots = slots; x)
 end
 
 ####################################################################
@@ -40,18 +41,10 @@ push!(Object.slots, [])                 # direct slots
 push!(Object.slots, [Object, Top])           # cpl
 
 #-------------- Generic Functions and Methods -----------------------
-GenericFunction = Instance(Class)
-MultiMethod = Instance(Class)
-
-push!(GenericFunction.slots, :GenericFunction)               # name
-push!(GenericFunction.slots, [Object])                       # superclasses
-push!(GenericFunction.slots, [:name, :args, :methods])       # direct slots
-push!(GenericFunction.slots, [GenericFunction, Object, Top]) # cpl
-
-push!(MultiMethod.slots, :MultiMethod)                                           # name
-push!(MultiMethod.slots, [Object])                                               # superclasses
-push!(MultiMethod.slots, [:specializers, :procedure, :generic_function])         # direct slots
-push!(MultiMethod.slots, [MultiMethod, Object, Top])                             # cpl
+GenericFunction = Instance(Class, [:GenericFunction, [Object], [:name, :args, :methods]]) 
+push!(GenericFunction.slots, [GenericFunction, Object, Top]) #cpl
+MultiMethod = Instance(Class, [:MultiMethod, [Object], [:specializers, :procedure, :generic_function]])
+push!(MultiMethod.slots, [MultiMethod, Object, Top]) #cpl
 ####################################################################
 
 ####################################################################
@@ -85,14 +78,6 @@ function get_field_index(instance::Instance, slot_name::Symbol)
     findfirst(==(slot_name), get_all_slots(getfield(instance, :class)))
 end
 
-function class_of(instance)
-    if (typeof(instance) == Instance)
-        return getfield(instance, :class)
-    end        
-
-    Top
-end
-
 function Base.getproperty(instance::Instance, slot_name::Symbol)
     if hasfield(Instance, slot_name)
         getfield(instance, slot_name)
@@ -111,6 +96,41 @@ function Base.setproperty!(instance::Instance, slot_name::Symbol, value)
     end
 end
 
+function class_of(instance)
+    if (typeof(instance) == Instance)
+        return getfield(instance, :class)
+    end        
+
+    Top
+end
+
+function class_name(instance)
+    instance.name
+end
+
+function class_direct_slots(instance)
+    instance.direct_slots
+end
+
+function class_slots(instance)
+    get_all_slots(instance)
+end
+
+function class_direct_superclasses(instance)
+    instance.direct_superclasses
+end
+
+function class_cpl(instance)
+    instance.cpl
+end
+
+function generic_methods(instance)
+    instance.methods
+end
+
+function method_specializers(instance)
+    instance.specializers
+end
 ####################################################################
 
 function compute_cpl(class::Instance)
@@ -134,48 +154,6 @@ end
 ####################################################################
 #                             METHODS                              #
 ####################################################################
-allocate_instance(class::Instance) = Instance(class)
-
-function initialize(instance::Instance, initargs)
-
-    for slot_name in get_direct_slots(getfield(instance, :class))
-        value = get(initargs, slot_name, missing)
-        push!(getfield(instance, :slots), value)
-    end
-
-    # TODO change this to generic function of Class
-
-    if getfield(instance, :class) == Class
-        cpl = compute_cpl(instance)
-        setproperty!(instance, CLASS_CPL, cpl)
-    end
-
-
-    for slot_name in get_indirect_slots(getfield(instance, :class))
-        value = get(initargs, slot_name, missing)
-        push!(getfield(instance, :slots), value)
-    end
-
-end
-
-new(class; initargs...) =
-    let instance = allocate_instance(class)
-        initialize(instance, initargs)
-        instance
-    end
-
-####################################################################
-
-
-####################################################################
-#                         GENERIC FUNCTIONS                        #
-####################################################################
-function create_method(generic_function, specializers, procedure)
-    (length(generic_function.args) == length(specializers)) || error("Wrong specializers for generic function.")
-
-    multi_method = new(MultiMethod, specializers=specializers, procedure=procedure, generic_function=generic_function)
-    push!(generic_function.methods, multi_method)
-end
 
 function get_method_similarity(method, arg_types)
     similarity = 0
@@ -232,7 +210,65 @@ function call_effective_method(generic_f, args)
 end
 
 (generic_f::Instance)(args...) = call_effective_method(generic_f, args)
+##################### Initialize Instance ##########################
+# ALLOCATE INSTANCE ------------------------------------------------
+allocate_instance = Instance(GenericFunction, [:allocate_instance, [:arg], []])
+# Objects 
+mm = Instance(MultiMethod, [[Object], (obj)->(Instance(obj)), allocate_instance])
+push!(allocate_instance.methods, mm)
+# Classes 
+mm = Instance(MultiMethod, [[Class], (cls)->(Instance(cls)), allocate_instance])
+push!(allocate_instance.methods, mm)
 
+# INITIALIZE -------------------------------------------------------
+initialize = Instance(GenericFunction, [:initialize, [:instance, :initargs], []])
+# Objects 
+mm = Instance(MultiMethod, [[Object, Top], function (instance, initargs)
+                                                for slot_name in get_all_slots(getfield(instance, :class))
+                                                    value = get(initargs, slot_name, missing)
+                                                    push!(getfield(instance, :slots), value)
+                                                end
+                                            end
+
+, initialize])
+push!(initialize.methods, mm)
+
+# Classes
+mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
+                                                for slot_name in get_direct_slots(getfield(instance, :class))
+                                                    value = get(initargs, slot_name, missing)
+                                                    push!(getfield(instance, :slots), value)
+                                                end
+
+                                                cpl = compute_cpl(instance)
+                                                setproperty!(instance, CLASS_CPL, cpl)
+
+                                                for slot_name in get_indirect_slots(getfield(instance, :class))
+                                                    value = get(initargs, slot_name, missing)
+                                                    push!(getfield(instance, :slots), value)
+                                                end
+                                            end
+, initialize])
+push!(initialize.methods, mm)
+
+new(class; initargs...) =
+    let instance = allocate_instance(class)
+        initialize(instance, initargs)
+        instance
+    end
+
+####################################################################
+
+
+####################################################################
+#                         GENERIC FUNCTIONS                        #
+####################################################################
+function create_method(generic_function, specializers, procedure)
+    (length(generic_function.args) == length(specializers)) || error("Wrong specializers for generic function.")
+
+    multi_method = new(MultiMethod, specializers=specializers, procedure=procedure, generic_function=generic_function)
+    push!(generic_function.methods, multi_method)
+end
 
 func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
 
@@ -296,9 +332,13 @@ let devices = [new(Screen), new(Printer)],
     end
 end
 
-Shape
-draw
-draw.methods[1]
+class_name(Circle)
+class_direct_slots(Circle)
+class_slots(Circle)
+class_direct_superclasses(Circle)
+class_cpl(Circle)
+generic_methods(draw)
+method_specializers(generic_methods(draw)[1])
 
 ####################################################################
 #                       Expected Result                            #
