@@ -3,7 +3,9 @@ const CLASS_NAME = :name
 const DIRECT_SUPERCLASSES = :direct_superclasses
 const DIRECT_SLOTS = :direct_slots
 const CLASS_CPL = :cpl
-const CLASS_SLOTS = [CLASS_NAME, DIRECT_SUPERCLASSES, DIRECT_SLOTS, CLASS_CPL]
+const INITFORMS = :initforms
+const METACLASS = :metaclass
+const CLASS_SLOTS = [CLASS_NAME, DIRECT_SUPERCLASSES, DIRECT_SLOTS, CLASS_CPL, INITFORMS, METACLASS]
 
 
 #=========== Instance Struct =============#
@@ -155,8 +157,11 @@ end
 #                             METHODS                              #
 ####################################################################
 
-function get_method_similarity(method, arg_types)
+function get_method_similarity(method_call)
     similarity = 0
+
+    method = method_call[1]
+    arg_types = method_call[2]
 
     for (specializer, arg_type) in zip(method.specializers, arg_types)
         cpl = arg_type.cpl
@@ -176,11 +181,10 @@ function get_applicable_methods(generic_f, arg_types)
     applicable_methods = []
 
     for method in generic_f.methods
-        if (!(get_method_similarity(method, arg_types) === nothing))
-            push!(applicable_methods, method)
+        if (!(get_method_similarity((method, arg_types)) === nothing))
+            push!(applicable_methods, (method, arg_types))
         end
     end
-
     applicable_methods
 end
 
@@ -191,22 +195,13 @@ function call_effective_method(generic_f, args)
     arg_types = class_of.(args)
     applicable_methods = get_applicable_methods(generic_f, arg_types)
 
-    
-    best_method = nothing
-    best_similarity = nothing
-    for method in applicable_methods
-        similarity = get_method_similarity(method, arg_types)
-        if ( (best_similarity === nothing) || (similarity < best_similarity) )
-            best_method = method
-            best_similarity = similarity
-        end
-    end
-
-    if (best_method === nothing)
+    if(length(applicable_methods) == 0)
         error("ERROR: No applicable method for function $(generic_f.name) with arguments $(args)")
     end
+
+    best_methods = sort(applicable_methods, by=get_method_similarity)
     
-    best_method.procedure(args...)
+    best_methods[1][1].procedure(args...)
 end
 
 (generic_f::Instance)(args...) = call_effective_method(generic_f, args)
