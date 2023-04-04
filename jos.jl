@@ -264,6 +264,14 @@ push!(initialize.methods, mm)
 mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
                                                 for slot_name in get_direct_slots(getfield(instance, :class))
                                                     value = get(initargs, slot_name, missing)
+                                                    if (slot_name == DIRECT_SUPERCLASSES)
+                                                        if (value === missing)
+                                                            value = [Object]
+                                                        elseif (Object ∉ value)
+                                                            push!(value, Object)                                                            
+                                                        end
+                                                    end
+
                                                     push!(getfield(instance, :slots), value)
                                                 end
 
@@ -294,7 +302,10 @@ function create_method(generic_function, specializers, procedure)
     (length(generic_function.args) == length(specializers)) || error("Wrong specializers for generic function.")
 
     multi_method = new(MultiMethod, specializers=specializers, procedure=procedure, generic_function=generic_function)
-    push!(generic_function.methods, multi_method)
+
+    if (multi_method.specializers ∉ method_specializers.(generic_function.methods))
+        push!(generic_function.methods, multi_method)
+    end
 end
 
 func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
@@ -337,7 +348,7 @@ end
 #                               TESTING                            #
 ####################################################################
 
-Shape = new(Class, name=:Shape, direct_superclasses=[Object], direct_slots=[])
+Shape = new(Class, name=:Shape, direct_slots=[])
 Device = new(Class, name=:Device, direct_superclasses=[Object], direct_slots=[])
 Line = new(Class, name=:Line, direct_superclasses=[Shape, Object], direct_slots=[:from, :to])
 Circle = new(Class, name=:Circle, direct_superclasses=[Shape, Object], direct_slots=[:center, :radius])
@@ -367,6 +378,8 @@ create_method(draw, [ColorMixin, Device],  function (cm, d)
                                                 call_next_method()
                                                 set_device_color!(d, previous_color)
                                            end)
+
+draw
 
 let devices = [new(Screen), new(Printer)],
     shapes = [new(Line), new(Circle)]
