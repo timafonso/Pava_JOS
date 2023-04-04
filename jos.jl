@@ -20,9 +20,10 @@ mutable struct Instance
 end
 
 #=========== Method Call Struct =========#
-struct MethodCall
-    method
+struct MethodCallStack
+    methods::Vector
     args
+    generic_function
 end
 
 ####################################################################
@@ -165,47 +166,42 @@ end
 #                             METHODS                              #
 ####################################################################
 
-function get_method_similarity(method_call)
-    similarity = 0
-
-    method = method_call[1]
-    arg_types = method_call[2]
-
+function is_applicable_method(method, arg_types)
+    
     for (specializer, arg_type) in zip(method.specializers, arg_types)
         cpl = arg_type.cpl
-        idx = findfirst(==(specializer), cpl)
+        result = findfirst(==(specializer), cpl)
+        
+        println("-----")
+        println(specializer.name)
+        println(arg_type.name)
+        println("-----")
 
-        if(idx === nothing)
-            return nothing
-        end
 
-        similarity += idx
+        (result === nothing) && return false
     end
-
-    similarity
+    true
 end
 
 function get_applicable_methods(generic_f, arg_types, args)
     applicable_methods = []
 
     for method in generic_f.methods
-        if (!(get_method_similarity((method, arg_types)) === nothing))
-            push!(applicable_methods, MethodCall(method, args))
+        if (is_applicable_method(method, arg_types))
+            push!(applicable_methods, method)
         end
     end
     applicable_methods
 end
 
-function compare_methods(method_call_1, method_call_2, arg_types)
-    method_1 = method_call_1.method
-    method_2 = method_call_2.method
+function compare_methods(method_1, method_2, arg_types)
 
     for (specializer_1, specializer_2 , arg_type) in zip(method_1.specializers, method_2.specializers, arg_types)
         cpl = arg_type.cpl
-        idx_1 = findfirst(==(specializer_1), cpl)
-        idx_2 = findfirst(==(specializer_2), cpl)
+        depth_1 = findfirst(==(specializer_1), cpl)
+        depth_2 = findfirst(==(specializer_2), cpl)
 
-        if(idx_1 < idx_2)
+        if(depth_1 < depth_2)
             return true
         end
     end
@@ -214,8 +210,12 @@ function compare_methods(method_call_1, method_call_2, arg_types)
 end
 
 function call_next_method()
-    best_method = popfirst!(applicable_method_stack[1])
-    best_method.method.procedure(best_method.args...)
+    let method_stack = applicable_method_stack
+        (length(method_stack.methods) == 0) && no_applicable_method(method_stack.generic_function, method_stack.args)
+
+        next_method = popfirst!(method_stack.methods)
+        next_method.procedure(method_stack.args...)
+    end    
 end 
 
 function call_effective_method(generic_f, args)
@@ -224,19 +224,22 @@ function call_effective_method(generic_f, args)
     arg_types = class_of.(args)
     applicable_methods = get_applicable_methods(generic_f, arg_types, args)
 
-    if(length(applicable_methods) == 0)
-        error("ERROR: No applicable method for function $(generic_f.name) with arguments $(args)")
-    end
+    (length(applicable_methods) == 0) && no_applicable_method(generic_f, args)
 
     best_methods = sort(applicable_methods, lt=(method_1, method_2)->compare_methods(method_1, method_2, arg_types))
-    pushfirst!(applicable_method_stack, best_methods)
-    aux = call_next_method()
-    popfirst!(applicable_method_stack)
+    
+    applicable_method_stack_backup = applicable_method_stack
+    global applicable_method_stack = MethodCallStack(best_methods, args, generic_f)
+    call_next_method()
+    global applicable_method_stack = applicable_method_stack_backup
+end
 
-    aux
+function no_applicable_method(gf, args)
+    error("No applicable method for function $(gf.name) with arguments $(args)")
 end
 
 (generic_f::Instance)(args...) = call_effective_method(generic_f, args)
+
 ##################### Initialize Instance ##########################
 # ALLOCATE INSTANCE ------------------------------------------------
 allocate_instance = Instance(GenericFunction, [:allocate_instance, [:arg], []])
