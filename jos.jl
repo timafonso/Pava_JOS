@@ -1,3 +1,5 @@
+global applicable_method_stack = []
+
 #=============== CONSTS =================#
 const CLASS_NAME = :name
 const DIRECT_SUPERCLASSES = :direct_superclasses
@@ -15,6 +17,12 @@ mutable struct Instance
     Instance() = (x = new(); x.class = x; x.slots = []; x)
     Instance(class) = new(class, [])
     Instance(class, slots) = (x = new(); x.class = class; x.slots = slots; x)
+end
+
+#=========== Method Call Struct =========#
+struct MethodCall
+    method
+    args
 end
 
 ####################################################################
@@ -177,31 +185,55 @@ function get_method_similarity(method_call)
     similarity
 end
 
-function get_applicable_methods(generic_f, arg_types)
+function get_applicable_methods(generic_f, arg_types, args)
     applicable_methods = []
 
     for method in generic_f.methods
         if (!(get_method_similarity((method, arg_types)) === nothing))
-            push!(applicable_methods, (method, arg_types))
+            push!(applicable_methods, MethodCall(method, args))
         end
     end
     applicable_methods
 end
 
+function compare_methods(method_call_1, method_call_2, arg_types)
+    method_1 = method_call_1.method
+    method_2 = method_call_2.method
+
+    for (specializer_1, specializer_2 , arg_type) in zip(method_1.specializers, method_2.specializers, arg_types)
+        cpl = arg_type.cpl
+        idx_1 = findfirst(==(specializer_1), cpl)
+        idx_2 = findfirst(==(specializer_2), cpl)
+
+        if(idx_1 < idx_2)
+            return true
+        end
+    end
+
+    return false
+end
+
+function call_next_method()
+    best_method = popfirst!(applicable_method_stack[1])
+    best_method.method.procedure(best_method.args...)
+end 
 
 function call_effective_method(generic_f, args)
     (length(generic_f.args) == length(args)) || error("Wrong arguments for generic function.")
 
     arg_types = class_of.(args)
-    applicable_methods = get_applicable_methods(generic_f, arg_types)
+    applicable_methods = get_applicable_methods(generic_f, arg_types, args)
 
     if(length(applicable_methods) == 0)
         error("ERROR: No applicable method for function $(generic_f.name) with arguments $(args)")
     end
 
-    best_methods = sort(applicable_methods, by=get_method_similarity)
-    
-    best_methods[1][1].procedure(args...)
+    best_methods = sort(applicable_methods, lt=(method_1, method_2)->compare_methods(method_1, method_2, arg_types))
+    pushfirst!(applicable_method_stack, best_methods)
+    aux = call_next_method()
+    popfirst!(applicable_method_stack)
+
+    aux
 end
 
 (generic_f::Instance)(args...) = call_effective_method(generic_f, args)
@@ -311,12 +343,30 @@ Line = new(Class, name=:Line, direct_superclasses=[Shape, Object], direct_slots=
 Circle = new(Class, name=:Circle, direct_superclasses=[Shape, Object], direct_slots=[:center, :radius])
 Screen = new(Class, name=:Screen, direct_superclasses=[Device, Object], direct_slots=[])
 Printer = new(Class, name=:Printer, direct_superclasses=[Device, Object], direct_slots=[])
+ColoredPrinter = new(Class, name=:ColoredPrinter, direct_superclasses=[Printer, Object], direct_slots=[:ink])
+ColorMixin = new(Class, name=:ColorMixin, direct_superclasses=[Object], direct_slots=[:color])
+ColoredLine = new(Class, name=:ColoredLine, direct_superclasses=[ColorMixin, Line, Object], direct_slots=[])
+ColoredCircle = new(Class, name=:ColoredCircle, direct_superclasses=[ColorMixin, Circle, Object], direct_slots=[])
+
+get_device_color = new(GenericFunction, name=:get_device_color, args=[:cp], methods=[])
+create_method(get_device_color, [ColoredPrinter], (cp)->(cp.ink))
+
+_set_device_color! = new(GenericFunction, name=:_set_device_color!, args=[:cp, :c], methods=[])
+set_device_color! = new(GenericFunction, name=:set_device_color!, args=[:cp, :c], methods=[])
+create_method(_set_device_color!, [ColoredPrinter, Top], (cp, c)->(cp.ink = c))
+create_method(set_device_color!, [ColoredPrinter, Top], (cp, c)->(println("Changing device color to $c"); _set_device_color!(cp, c)))
 
 draw = new(GenericFunction, name=:draw, args=[:shape, :device], methods=[])
 create_method(draw, [Line, Screen], (l, s)->println("Drawing a Line on Screen"))
 create_method(draw, [Circle, Screen], (c, s)->println("Drawing a Circle on Screen"))
 create_method(draw, [Line, Printer], (l, p)->println("Drawing a Line on Printer"))
 create_method(draw, [Circle, Printer], (c, p)->println("Drawing a Circle on Printer"))
+create_method(draw, [ColorMixin, Device],  function (cm, d) 
+                                                previous_color = get_device_color(d)
+                                                set_device_color!(d, cm.color)
+                                                call_next_method()
+                                                set_device_color!(d, previous_color)
+                                           end)
 
 let devices = [new(Screen), new(Printer)],
     shapes = [new(Line), new(Circle)]
@@ -327,14 +377,12 @@ let devices = [new(Screen), new(Printer)],
     end
 end
 
-class_name(Circle)
-class_direct_slots(Circle)
-class_slots(Circle)
-class_direct_superclasses(Circle)
-class_cpl(Circle)
-generic_methods(draw)
-method_specializers(generic_methods(draw)[1])
-
+let shapes = [new(Line), new(ColoredCircle, color=:red), new(ColoredLine, color=:blue)],
+    printer = new(ColoredPrinter, ink=:black)
+    for shape in shapes
+        draw(shape, printer)
+    end
+end
 ####################################################################
 #                       Expected Result                            #
 ####################################################################
