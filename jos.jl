@@ -9,6 +9,9 @@ const INITFORMS = :initforms
 const METACLASS = :metaclass
 const CLASS_SLOTS = [CLASS_NAME, DIRECT_SUPERCLASSES, DIRECT_SLOTS, CLASS_CPL, INITFORMS, METACLASS]
 
+const CLASS_OPTIONS_READER = :reader
+const CLASS_OPTIONS_WRITER = :writer
+const CLASS_OPTIONS_INITFORM = :initfrom
 
 #=========== Instance Struct =============#
 mutable struct Instance
@@ -314,6 +317,7 @@ func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
 ####################################################################
 
 ############################# Print ################################
+
 global print_object = new(GenericFunction, name=:print_object, args=[:obj, :io], methods=[])
 
 # Objects ----------------------------------------------------------
@@ -342,15 +346,11 @@ end
 ####################################################################
 #                               MACROS                             #
 ####################################################################
-macro defclass(class, superclasses, direct_slots)
-    direct_superclasses = superclasses.args
-    direct_slot_names = direct_slots.args
 
-    class_name = Expr(:quote, class)
-    quote
-        global $class = new(Class, name=$class_name, direct_superclasses=$direct_superclasses, direct_slots=$direct_slot_names)
-    end
-end
+# @defclass(Person, [],
+#       [[name='', reader=get_name, writer=set_name!],
+#       [age, reader=get_age, writer=set_age!, initform=0],
+#       [friend, reader=get_friend, writer=set_friend!]],
 
 macro defgeneric(generic_function)
 
@@ -377,9 +377,14 @@ macro defmethod(method)
     arguments = []
     specializers = []
 
-    for expr in prototype.args[2:end]
-        push!(arguments, expr.args[1])
-        push!(specializers, expr.args[2])
+    for parameter in prototype.args[2:end]
+        if typeof(parameter) === Symbol
+            push!(arguments, parameter)
+            push!(specializers, Top)
+        else
+            push!(arguments, parameter.args[1])
+            push!(specializers, parameter.args[2])
+        end
     end
 
     quote
@@ -391,6 +396,74 @@ macro defmethod(method)
         end)
     end
 end
+
+macro defclass(class, superclasses, direct_slots)
+    class_name = Expr(:quote, class)
+    direct_superclasses = superclasses.args
+
+
+    direct_slot_names = []
+    direct_slot_initforms = []
+    method_definitions = []
+
+    for slot_def in direct_slots.args
+        initform = missing
+        slot_name = slot_def
+
+        if (slot_def.head == :vect)
+            slot_name = slot_def.args[1]
+            options = slot_def.args[2:end]
+
+            for option in options
+                option_name = option.args[1]
+                option_value = option.args[2]
+
+                if option_name == CLASS_OPTIONS_INITFORM
+                    initform = option_value
+                elseif option_name == CLASS_OPTIONS_READER
+                    reader_method = quote
+                        @defmethod $(option_value)(o::$class) = o.$(slot_name)
+                    end
+                    push!(method_definitions, reader_method)
+                elseif option_name == CLASS_OPTIONS_WRITER
+                    writer_method = quote
+                        @defmethod $(option_value)(o::$class, v) = o.$(slot_name) = v
+                    end
+                    push!(method_definitions, writer_method)
+                end
+            end
+        end
+
+        push!(direct_slot_names, slot_name)
+        push!(direct_slot_initforms, initform)
+    end
+
+
+    quote
+        global $class = new(Class, name=$class_name, direct_superclasses=$direct_superclasses, direct_slots=$direct_slot_names)
+
+        $(method_definitions...)
+
+        $class
+    end
+end
+
+@macroexpand @defclass(Person, [], [[name, reader = get_name, writer = set_name!],
+    [age, reader = get_age, writer = set_age!, initform = 0],
+    [friend, reader = get_friend, writer = set_friend!]])
+
+@defclass(Person, [], [[name, reader = get_name, writer = set_name!],
+    [age, reader = get_age, writer = set_age!, initform = 0],
+    [friend, reader = get_friend, writer = set_friend!]])
+
+p = new(Person, age=1)
+
+show(Person.slots)
+
+@defmethod set_friend!(o::Person, v) = begin
+    o.friend = v
+end
+
 
 @defclass(ComplexNumber, [], [real, imag])
 
