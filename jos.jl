@@ -171,12 +171,6 @@ function is_applicable_method(method, arg_types)
     for (specializer, arg_type) in zip(method.specializers, arg_types)
         cpl = arg_type.cpl
         result = findfirst(==(specializer), cpl)
-        
-        println("-----")
-        println(specializer.name)
-        println(arg_type.name)
-        println("-----")
-
 
         (result === nothing) && return false
     end
@@ -230,8 +224,10 @@ function call_effective_method(generic_f, args)
     
     applicable_method_stack_backup = applicable_method_stack
     global applicable_method_stack = MethodCallStack(best_methods, args, generic_f)
-    call_next_method()
+    result = call_next_method()
     global applicable_method_stack = applicable_method_stack_backup
+
+    result
 end
 
 function no_applicable_method(gf, args)
@@ -346,6 +342,66 @@ end
 
 ####################################################################
 
+####################################################################
+#                               MACROS                             #
+####################################################################
+macro defclass(class, superclasses, direct_slots)
+    direct_superclasses = superclasses.args
+    direct_slot_names = direct_slots.args
+
+    class_name = Expr(:quote, class) 
+    quote
+        global $class = new(Class, name=$class_name, direct_superclasses=$direct_superclasses, direct_slots=$direct_slot_names)
+    end
+end
+
+macro defgeneric(generic_function)
+   
+    name = generic_function.args[1]
+    arguments = generic_function.args[2:end]
+
+    generic_function_name = Expr(:quote, name)
+
+    quote
+        global $name = new(GenericFunction, name=$generic_function_name, args=$arguments, methods=[])
+    end
+end
+
+macro defmethod(method)
+    # index 1 method name arguments and argument arg_types
+    # index 2 procedure
+    # create_method(get_device_color, [ColoredPrinter], (cp)->(cp.ink))
+    name = method.args[1].args[1]
+    generic_function_name = Expr(:quote, name)
+
+    arguments = []
+    specializers = []
+
+    for expr in method.args[1].args[2:end]
+        push!(arguments, expr.args[1])
+        push!(specializers, expr.args[2])
+    end
+
+    procedure = method.args[2]
+    quote
+        if (!@isdefined $name)
+            global $name = new(GenericFunction, name=$generic_function_name, args=$arguments, methods=[])
+        end
+        #create_method($name, $specializers, (arguments...)->$(procedure))
+    end
+end
+
+@defclass(ComplexNumber, [], [real, imag])
+
+@defgeneric add(a, b)
+@defmethod add(a::ComplexNumber, b::ComplexNumber) =
+    new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
+
+
+show(add.methods)
+c1 = new(ComplexNumber, real=1, imag=2)
+c2 = new(ComplexNumber, real=1, imag=2)
+add(c1, c2)
 
 ####################################################################
 #                               TESTING                            #
@@ -362,13 +418,13 @@ ColorMixin = new(Class, name=:ColorMixin, direct_superclasses=[Object], direct_s
 ColoredLine = new(Class, name=:ColoredLine, direct_superclasses=[ColorMixin, Line, Object], direct_slots=[])
 ColoredCircle = new(Class, name=:ColoredCircle, direct_superclasses=[ColorMixin, Circle, Object], direct_slots=[])
 
-get_device_color = new(GenericFunction, name=:get_device_color, args=[:cp], methods=[])
+@defgeneric get_device_color(cp)
 create_method(get_device_color, [ColoredPrinter], (cp)->(cp.ink))
 
 _set_device_color! = new(GenericFunction, name=:_set_device_color!, args=[:cp, :c], methods=[])
 set_device_color! = new(GenericFunction, name=:set_device_color!, args=[:cp, :c], methods=[])
 create_method(_set_device_color!, [ColoredPrinter, Top], (cp, c)->(cp.ink = c))
-create_method(set_device_color!, [ColoredPrinter, Top], (cp, c)->(println("Changing device color to $c"); _set_device_color!(cp, c)))
+create_method(set_device_color!, [ColoredPrinter, Top], (cp, c)->(println("Changing printer ink color to $c"); _set_device_color!(cp, c)))
 
 draw = new(GenericFunction, name=:draw, args=[:shape, :device], methods=[])
 create_method(draw, [Line, Screen], (l, s)->println("Drawing a Line on Screen"))
@@ -382,7 +438,7 @@ create_method(draw, [ColorMixin, Device],  function (cm, d)
                                                 set_device_color!(d, previous_color)
                                            end)
 
-draw
+show(draw.methods)
 
 let devices = [new(Screen), new(Printer)],
     shapes = [new(Line), new(Circle)]
