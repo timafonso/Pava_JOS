@@ -52,7 +52,7 @@ push!(Object.slots, [])                 # direct slots
 push!(Object.slots, [Object, Top])           # cpl
 
 #-------------- Generic Functions and Methods -----------------------
-GenericFunction = Instance(Class, [:GenericFunction, [Object], [:name, :args, :methods]]) 
+GenericFunction = Instance(Class, [:GenericFunction, [Object], [:name, :args, :methods]])
 push!(GenericFunction.slots, [GenericFunction, Object, Top]) #cpl
 MultiMethod = Instance(Class, [:MultiMethod, [Object], [:specializers, :procedure, :generic_function]])
 push!(MultiMethod.slots, [MultiMethod, Object, Top]) #cpl
@@ -110,7 +110,7 @@ end
 function class_of(instance)
     if (typeof(instance) == Instance)
         return getfield(instance, :class)
-    end        
+    end
 
     Top
 end
@@ -167,7 +167,7 @@ end
 ####################################################################
 
 function is_applicable_method(method, arg_types)
-    
+
     for (specializer, arg_type) in zip(method.specializers, arg_types)
         cpl = arg_type.cpl
         result = findfirst(==(specializer), cpl)
@@ -177,7 +177,7 @@ function is_applicable_method(method, arg_types)
     true
 end
 
-function get_applicable_methods(generic_f, arg_types, args)
+function get_applicable_methods(generic_f, arg_types)
     applicable_methods = []
 
     for method in generic_f.methods
@@ -190,12 +190,12 @@ end
 
 function compare_methods(method_1, method_2, arg_types)
 
-    for (specializer_1, specializer_2 , arg_type) in zip(method_1.specializers, method_2.specializers, arg_types)
+    for (specializer_1, specializer_2, arg_type) in zip(method_1.specializers, method_2.specializers, arg_types)
         cpl = arg_type.cpl
         depth_1 = findfirst(==(specializer_1), cpl)
         depth_2 = findfirst(==(specializer_2), cpl)
 
-        if(depth_1 < depth_2)
+        if (depth_1 < depth_2)
             return true
         end
     end
@@ -209,19 +209,19 @@ function call_next_method()
 
         next_method = popfirst!(method_stack.methods)
         next_method.procedure(method_stack.args...)
-    end    
-end 
+    end
+end
 
 function call_effective_method(generic_f, args)
     (length(generic_f.args) == length(args)) || error("Wrong arguments for generic function.")
 
     arg_types = class_of.(args)
-    applicable_methods = get_applicable_methods(generic_f, arg_types, args)
+    applicable_methods = get_applicable_methods(generic_f, arg_types)
 
     (length(applicable_methods) == 0) && no_applicable_method(generic_f, args)
 
-    best_methods = sort(applicable_methods, lt=(method_1, method_2)->compare_methods(method_1, method_2, arg_types))
-    
+    best_methods = sort(applicable_methods, lt=(method_1, method_2) -> compare_methods(method_1, method_2, arg_types))
+
     applicable_method_stack_backup = applicable_method_stack
     global applicable_method_stack = MethodCallStack(best_methods, args, generic_f)
     result = call_next_method()
@@ -240,49 +240,46 @@ end
 # ALLOCATE INSTANCE ------------------------------------------------
 allocate_instance = Instance(GenericFunction, [:allocate_instance, [:arg], []])
 # Objects 
-mm = Instance(MultiMethod, [[Object], (obj)->(Instance(obj)), allocate_instance])
+mm = Instance(MultiMethod, [[Object], (obj) -> (Instance(obj)), allocate_instance])
 push!(allocate_instance.methods, mm)
 # Classes 
-mm = Instance(MultiMethod, [[Class], (cls)->(Instance(cls)), allocate_instance])
+mm = Instance(MultiMethod, [[Class], (cls) -> (Instance(cls)), allocate_instance])
 push!(allocate_instance.methods, mm)
 
 # INITIALIZE -------------------------------------------------------
 initialize = Instance(GenericFunction, [:initialize, [:instance, :initargs], []])
 # Objects 
 mm = Instance(MultiMethod, [[Object, Top], function (instance, initargs)
-                                                for slot_name in get_all_slots(getfield(instance, :class))
-                                                    value = get(initargs, slot_name, missing)
-                                                    push!(getfield(instance, :slots), value)
-                                                end
-                                            end
-
-, initialize])
+        for slot_name in get_all_slots(getfield(instance, :class))
+            value = get(initargs, slot_name, missing)
+            push!(getfield(instance, :slots), value)
+        end
+    end, initialize])
 push!(initialize.methods, mm)
 
 # Classes
 mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
-                                                for slot_name in get_direct_slots(getfield(instance, :class))
-                                                    value = get(initargs, slot_name, missing)
-                                                    if (slot_name == DIRECT_SUPERCLASSES)
-                                                        if (value === missing)
-                                                            value = [Object]
-                                                        elseif (Object ∉ value)
-                                                            push!(value, Object)                                                            
-                                                        end
-                                                    end
+        for slot_name in get_direct_slots(getfield(instance, :class))
+            value = get(initargs, slot_name, missing)
+            if (slot_name == DIRECT_SUPERCLASSES)
+                if (value === missing)
+                    value = [Object]
+                elseif (Object ∉ value)
+                    push!(value, Object)
+                end
+            end
 
-                                                    push!(getfield(instance, :slots), value)
-                                                end
+            push!(getfield(instance, :slots), value)
+        end
 
-                                                cpl = compute_cpl(instance)
-                                                setproperty!(instance, CLASS_CPL, cpl)
+        cpl = compute_cpl(instance)
+        setproperty!(instance, CLASS_CPL, cpl)
 
-                                                for slot_name in get_indirect_slots(getfield(instance, :class))
-                                                    value = get(initargs, slot_name, missing)
-                                                    push!(getfield(instance, :slots), value)
-                                                end
-                                            end
-, initialize])
+        for slot_name in get_indirect_slots(getfield(instance, :class))
+            value = get(initargs, slot_name, missing)
+            push!(getfield(instance, :slots), value)
+        end
+    end, initialize])
 push!(initialize.methods, mm)
 
 new(class; initargs...) =
@@ -320,16 +317,16 @@ func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
 global print_object = new(GenericFunction, name=:print_object, args=[:obj, :io], methods=[])
 
 # Objects ----------------------------------------------------------
-create_method(print_object, [Object, Top], (obj, io)->(print(io, "<$((class_of(obj)).name) $(string(objectid(obj), base=62))>")))
+create_method(print_object, [Object, Top], (obj, io) -> (print(io, "<$((class_of(obj)).name) $(string(objectid(obj), base=62))>")))
 
 # Classes ----------------------------------------------------------
-create_method(print_object, [Class, Top], (cls, io)->(print(io, "<$(class_of(cls).name) $(cls.name)>")))
+create_method(print_object, [Class, Top], (cls, io) -> (print(io, "<$(class_of(cls).name) $(cls.name)>")))
 
 # Generic Functions ------------------------------------------------
-create_method(print_object, [GenericFunction, Top], (gf, io)->(print(io, "<GenericFunction $(gf.name) with $(length(gf.methods)) methods>")))
+create_method(print_object, [GenericFunction, Top], (gf, io) -> (print(io, "<GenericFunction $(gf.name) with $(length(gf.methods)) methods>")))
 
 # Multi Methods ----------------------------------------------------
-create_method(print_object, [MultiMethod, Top], (mm, io)->(names = getproperty.(mm.specializers, :name); print(io, "<MultiMethod $(mm.generic_function.name)($(join(names, ", ")))>")))
+create_method(print_object, [MultiMethod, Top], (mm, io) -> (names = getproperty.(mm.specializers, :name); print(io, "<MultiMethod $(mm.generic_function.name)($(join(names, ", ")))>")))
 
 function Base.show(io::IO, obj::Instance)
     print_object(obj, io)
@@ -349,14 +346,14 @@ macro defclass(class, superclasses, direct_slots)
     direct_superclasses = superclasses.args
     direct_slot_names = direct_slots.args
 
-    class_name = Expr(:quote, class) 
+    class_name = Expr(:quote, class)
     quote
         global $class = new(Class, name=$class_name, direct_superclasses=$direct_superclasses, direct_slots=$direct_slot_names)
     end
 end
 
 macro defgeneric(generic_function)
-   
+
     name = generic_function.args[1]
     arguments = generic_function.args[2:end]
 
@@ -374,20 +371,24 @@ macro defmethod(method)
     name = method.args[1].args[1]
     generic_function_name = Expr(:quote, name)
 
+    prototype = method.args[1]
+    body = method.args[2].args[2]
+
     arguments = []
     specializers = []
 
-    for expr in method.args[1].args[2:end]
+    for expr in prototype.args[2:end]
         push!(arguments, expr.args[1])
         push!(specializers, expr.args[2])
     end
 
-    procedure = method.args[2]
     quote
         if (!@isdefined $name)
             global $name = new(GenericFunction, name=$generic_function_name, args=$arguments, methods=[])
         end
-        #create_method($name, $specializers, (arguments...)->$(procedure))
+        create_method($name, [$(specializers...),], function ($(arguments...),)
+            $(body)
+        end)
     end
 end
 
@@ -396,7 +397,6 @@ end
 @defgeneric add(a, b)
 @defmethod add(a::ComplexNumber, b::ComplexNumber) =
     new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
-
 
 show(add.methods)
 c1 = new(ComplexNumber, real=1, imag=2)
@@ -419,29 +419,30 @@ ColoredLine = new(Class, name=:ColoredLine, direct_superclasses=[ColorMixin, Lin
 ColoredCircle = new(Class, name=:ColoredCircle, direct_superclasses=[ColorMixin, Circle, Object], direct_slots=[])
 
 @defgeneric get_device_color(cp)
-create_method(get_device_color, [ColoredPrinter], (cp)->(cp.ink))
+create_method(get_device_color, [ColoredPrinter], (cp) -> (cp.ink))
 
 _set_device_color! = new(GenericFunction, name=:_set_device_color!, args=[:cp, :c], methods=[])
 set_device_color! = new(GenericFunction, name=:set_device_color!, args=[:cp, :c], methods=[])
-create_method(_set_device_color!, [ColoredPrinter, Top], (cp, c)->(cp.ink = c))
-create_method(set_device_color!, [ColoredPrinter, Top], (cp, c)->(println("Changing printer ink color to $c"); _set_device_color!(cp, c)))
+create_method(_set_device_color!, [ColoredPrinter, Top], (cp, c) -> (cp.ink = c))
+create_method(set_device_color!, [ColoredPrinter, Top], (cp, c) -> (println("Changing printer ink color to $c"); _set_device_color!(cp, c)))
 
 draw = new(GenericFunction, name=:draw, args=[:shape, :device], methods=[])
-create_method(draw, [Line, Screen], (l, s)->println("Drawing a Line on Screen"))
-create_method(draw, [Circle, Screen], (c, s)->println("Drawing a Circle on Screen"))
-create_method(draw, [Line, Printer], (l, p)->println("Drawing a Line on Printer"))
-create_method(draw, [Circle, Printer], (c, p)->println("Drawing a Circle on Printer"))
-create_method(draw, [ColorMixin, Device],  function (cm, d) 
-                                                previous_color = get_device_color(d)
-                                                set_device_color!(d, cm.color)
-                                                call_next_method()
-                                                set_device_color!(d, previous_color)
-                                           end)
+create_method(draw, [Line, Screen], (l, s) -> println("Drawing a Line on Screen"))
+create_method(draw, [Circle, Screen], (c, s) -> println("Drawing a Circle on Screen"))
+create_method(draw, [Line, Printer], (l, p) -> println("Drawing a Line on Printer"))
+create_method(draw, [Circle, Printer], (c, p) -> println("Drawing a Circle on Printer"))
+create_method(draw, [ColorMixin, Device], function (cm, d)
+    previous_color = get_device_color(d)
+    set_device_color!(d, cm.color)
+    call_next_method()
+    set_device_color!(d, previous_color)
+end)
 
 show(draw.methods)
 
 let devices = [new(Screen), new(Printer)],
     shapes = [new(Line), new(Circle)]
+
     for device in devices
         for shape in shapes
             draw(shape, device)
@@ -451,6 +452,7 @@ end
 
 let shapes = [new(Line), new(ColoredCircle, color=:red), new(ColoredLine, color=:blue)],
     printer = new(ColoredPrinter, ink=:black)
+
     for shape in shapes
         draw(shape, printer)
     end
