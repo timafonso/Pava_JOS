@@ -501,27 +501,17 @@ macro defclass(class, superclasses, direct_slots)
     end
 end
 
-@macroexpand @defclass(Person, [], [[name, reader = get_name, writer = set_name!],
-    [age, reader = get_age, writer = set_age!, initform = 0],
-    [friend, reader = get_friend, writer = set_friend!]])
 
-@defclass(Person, [], [[name, reader = get_name, writer = set_name!],
-    [age, reader = get_age, writer = set_age!, initform = 0],
-    [friend, reader = get_friend, writer = set_friend!]])
-
-
-p = new(Person, age=1)
-
-@defclass(ComplexNumber, [], [real, imag])
-
-@defgeneric add(a, b)
-@defmethod add(a::ComplexNumber, b::ComplexNumber) =
-    new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
-
-show(add.methods)
-c1 = new(ComplexNumber, real=1, imag=2)
-c2 = new(ComplexNumber, real=1, imag=2)
-add(c1, c2)
+macro defbuiltinclass(type)
+    !@isdefined(type) && error("Builtin Julia type [$type] does not exist.")
+    class_name = Symbol("_$type")
+    esc(quote
+        @defclass($class_name, [Top], [])
+        function class_of(i::$type)
+            return $class_name
+        end
+    end)
+end
 
 ####################################################################
 #                               TESTING                            #
@@ -577,6 +567,39 @@ let shapes = [new(Line), new(ColoredCircle, color=:red), new(ColoredLine, color=
         draw(shape, printer)
     end
 end
+
+#--------------------------------------------------------------------------
+
+@defclass(Person, [], [[name, reader = get_name, writer = set_name!],
+    [age, reader = get_age, writer = set_age!, initform = 0],
+    [friend, reader = get_friend, writer = set_friend!]])
+
+
+p = new(Person, name='a')
+display(p.slots)
+
+@defclass(ComplexNumber, [], [real, imag])
+
+@defgeneric add(a, b)
+@defmethod add(a::ComplexNumber, b::ComplexNumber) =
+    new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
+
+show(add.methods)
+c1 = new(ComplexNumber, real=1, imag=2)
+c2 = new(ComplexNumber, real=1, imag=2)
+add(c1, c2)
+
+#--------------------------------------------------------------------------
+
+@macroexpand1 @defbuiltinclass(Int64)
+@defbuiltinclass(Int64)
+@defbuiltinclass(String)
+
+
+class_of(1)
+
+
+
 ####################################################################
 #                       Expected Result                            #
 ####################################################################

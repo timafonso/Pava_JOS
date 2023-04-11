@@ -4,3 +4,7 @@ Julia Object System
 ### Questions:
 
 - Class redefinition, should update already existing instances class? Extra?
+
+
+### TODO
+- test init forms
