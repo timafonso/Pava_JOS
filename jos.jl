@@ -39,26 +39,33 @@ Class = Instance()
 Top = Instance(Class)
 Object = Instance(Class)
 
-push!(Class.slots, :Class)              # name
-push!(Class.slots, [Object])            # superclasses
-push!(Class.slots, CLASS_SLOTS)         # direct slots
-push!(Class.slots, [Class, Object, Top])     # cpl
+push!(Class.slots, :Class)                              # name
+push!(Class.slots, [Object])                            # superclasses
+push!(Class.slots, CLASS_SLOTS)                         # direct slots
+push!(Class.slots, [Class, Object, Top])                # cpl
+push!(Class.slots, [missing for _ in CLASS_SLOTS])      # initforms
 
 push!(Top.slots, :Top)                  # name
-push!(Top.slots, [])                 # superclasses
-push!(Top.slots, [])                 # direct slots
-push!(Top.slots, [Top])              # cpl
+push!(Top.slots, [])                    # superclasses
+push!(Top.slots, [])                    # direct slots
+push!(Top.slots, [Top])                 # cpl
+push!(Top.slots, [])                    # initforms
+
 
 push!(Object.slots, :Object)            # name
 push!(Object.slots, [Top])              # superclasses
 push!(Object.slots, [])                 # direct slots
 push!(Object.slots, [Object, Top])           # cpl
+push!(Object.slots, [])                 # initforms
 
 #-------------- Generic Functions and Methods -----------------------
 GenericFunction = Instance(Class, [:GenericFunction, [Object], [:name, :args, :methods]])
 push!(GenericFunction.slots, [GenericFunction, Object, Top]) #cpl
+push!(GenericFunction.slots, [missing, missing, missing]) #initforms
 MultiMethod = Instance(Class, [:MultiMethod, [Object], [:specializers, :procedure, :generic_function]])
 push!(MultiMethod.slots, [MultiMethod, Object, Top]) #cpl
+push!(MultiMethod.slots, [missing, missing, missing]) #initforms
+
 ####################################################################
 
 ####################################################################
@@ -68,20 +75,52 @@ function get_direct_slots(class::Instance)
     idx = findfirst(==(DIRECT_SLOTS), CLASS_SLOTS)
     getfield(class, :slots)[idx]
 end
-function get_indirect_slots(class::Instance)
+
+function get_direct_slots_and_initforms(class::Instance)
+    idx = findfirst(==(DIRECT_SLOTS), CLASS_SLOTS)
+    slots = getfield(class, :slots)[idx]
+    initforms = get_direct_initforms(class)
+    slots, initforms
+end
+
+function get_direct_initforms(class::Instance)
+    idx = findfirst(==(INITFORMS), CLASS_SLOTS)
+    getfield(class, :slots)[idx]
+end
+
+function get_indirect_slots(class::Instance, get_initforms::Bool=false)
     idx = findfirst(==(CLASS_CPL), CLASS_SLOTS)
     cpl = getfield(class, :slots)[idx]
 
     indirect_slots = []
+    indirect_initforms = []
     for class_cpl in cpl
         if class_cpl == class
             continue
         end
 
-        indirect_slots = vcat(indirect_slots, get_direct_slots(class_cpl))
+        if get_initforms
+            slots, initforms = get_direct_slots_and_initforms(class_cpl)
+            indirect_initforms = vcat(indirect_initforms, initforms)
+        else
+            slots = get_direct_slots(class_cpl)
+        end
+
+        indirect_slots = vcat(indirect_slots, slots)
     end
 
-    indirect_slots
+    get_initforms ? (indirect_slots, indirect_initforms) : indirect_slots
+end
+
+function get_indirect_slots_and_initforms(class::Instance)
+    get_indirect_slots(class, true)
+end
+
+
+function get_all_slots_and_initforms(class::Instance)
+    slots, initforms = get_direct_slots_and_initforms(class)
+    indirect_slots, indirect_initforms = get_indirect_slots_and_initforms(class)
+    vcat(slots, indirect_slots), vcat(initforms, indirect_initforms)
 end
 
 function get_all_slots(class::Instance)
@@ -89,7 +128,8 @@ function get_all_slots(class::Instance)
 end
 
 function get_field_index(instance::Instance, slot_name::Symbol)
-    findfirst(==(slot_name), get_all_slots(getfield(instance, :class)))
+    slots = get_all_slots(getfield(instance, :class))
+    findfirst(==(slot_name), slots)
 end
 
 function Base.getproperty(instance::Instance, slot_name::Symbol)
@@ -145,6 +185,15 @@ end
 function method_specializers(instance)
     instance.specializers
 end
+
+function verified_collect(c)
+    collection = collect(c)
+    if (length(collection) == 0)
+        collection = [[], []]
+    end
+    return collection
+end
+
 ####################################################################
 
 function compute_cpl(class::Instance)
@@ -253,8 +302,9 @@ push!(allocate_instance.methods, mm)
 initialize = Instance(GenericFunction, [:initialize, [:instance, :initargs], []])
 # Objects 
 mm = Instance(MultiMethod, [[Object, Top], function (instance, initargs)
-        for slot_name in get_all_slots(getfield(instance, :class))
-            value = get(initargs, slot_name, missing)
+        slots, initforms = get_all_slots_and_initforms(getfield(instance, :class))
+        for (slot_name, initform) in zip(slots, initforms)
+            value = get(initargs, slot_name, initform)
             push!(getfield(instance, :slots), value)
         end
     end, initialize])
@@ -262,8 +312,9 @@ push!(initialize.methods, mm)
 
 # Classes
 mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
-        for slot_name in get_direct_slots(getfield(instance, :class))
-            value = get(initargs, slot_name, missing)
+        slots, initforms = get_direct_slots_and_initforms(getfield(instance, :class))
+        for (slot_name, initform) in zip(slots, initforms)
+            value = get(initargs, slot_name, initform)
             if (slot_name == DIRECT_SUPERCLASSES)
                 if (value === missing)
                     value = [Object]
@@ -278,8 +329,9 @@ mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
         cpl = compute_cpl(instance)
         setproperty!(instance, CLASS_CPL, cpl)
 
-        for slot_name in get_indirect_slots(getfield(instance, :class))
-            value = get(initargs, slot_name, missing)
+        slots, initforms = get_all_slots_and_initforms(getfield(instance, :class))
+        for (slot_name, initform) in zip(slots, initforms)
+            value = get(initargs, slot_name, initform)
             push!(getfield(instance, :slots), value)
         end
     end, initialize])
@@ -307,7 +359,7 @@ function create_method(generic_function, specializers, procedure)
     end
 end
 
-func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
+# func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
 
 
 ####################################################################
@@ -336,10 +388,6 @@ function Base.show(io::IO, obj::Instance)
     print_object(obj, io)
 end
 ####################################################################
-
-
-
-
 
 ####################################################################
 
@@ -410,9 +458,14 @@ macro defclass(class, superclasses, direct_slots)
         initform = missing
         slot_name = slot_def
 
-        if (slot_def.head == :vect)
+        if (typeof(slot_def) == Expr && slot_def.head == :vect)
             slot_name = slot_def.args[1]
             options = slot_def.args[2:end]
+
+            if typeof(slot_name) == Expr
+                initform = slot_name.args[2]
+                slot_name = slot_name.args[1]
+            end
 
             for option in options
                 option_name = option.args[1]
@@ -440,7 +493,7 @@ macro defclass(class, superclasses, direct_slots)
 
 
     quote
-        global $class = new(Class, name=$class_name, direct_superclasses=$direct_superclasses, direct_slots=$direct_slot_names)
+        global $class = new(Class, $CLASS_NAME=$class_name, $DIRECT_SUPERCLASSES=$direct_superclasses, $DIRECT_SLOTS=$direct_slot_names, $INITFORMS=$direct_slot_initforms)
 
         $(method_definitions...)
 
@@ -456,14 +509,8 @@ end
     [age, reader = get_age, writer = set_age!, initform = 0],
     [friend, reader = get_friend, writer = set_friend!]])
 
+
 p = new(Person, age=1)
-
-show(Person.slots)
-
-@defmethod set_friend!(o::Person, v) = begin
-    o.friend = v
-end
-
 
 @defclass(ComplexNumber, [], [real, imag])
 
