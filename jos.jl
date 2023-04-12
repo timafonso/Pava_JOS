@@ -11,7 +11,7 @@ const CLASS_SLOTS = [CLASS_NAME, DIRECT_SUPERCLASSES, DIRECT_SLOTS, CLASS_CPL, I
 
 const CLASS_OPTIONS_READER = :reader
 const CLASS_OPTIONS_WRITER = :writer
-const CLASS_OPTIONS_INITFORM = :initfrom
+const CLASS_OPTIONS_INITFORM = :initform
 
 #=========== Instance Struct =============#
 mutable struct Instance
@@ -506,7 +506,7 @@ macro defbuiltinclass(type)
     !@isdefined(type) && error("Builtin Julia type [$type] does not exist.")
     class_name = Symbol("_$type")
     esc(quote
-        @defclass($class_name, [Top], [])
+        @defclass($class_name, [$Top], [])
         function class_of(i::$type)
             return $class_name
         end
@@ -571,8 +571,8 @@ end
 #--------------------------------------------------------------------------
 
 @defclass(Person, [], [[name, reader = get_name, writer = set_name!],
-    [age, reader = get_age, writer = set_age!, initform = 0],
-    [friend, reader = get_friend, writer = set_friend!]])
+    [age, reader = get_age, writer = set_age!, initform=2],
+    [friend="Jorge", reader = get_friend, writer = set_friend!]])
 
 
 p = new(Person, name='a')
@@ -591,12 +591,13 @@ add(c1, c2)
 
 #--------------------------------------------------------------------------
 
-@macroexpand1 @defbuiltinclass(Int64)
+@macroexpand @defbuiltinclass(Int64)
 @defbuiltinclass(Int64)
 @defbuiltinclass(String)
 
 
 class_of(1)
+class_of("Dragon")
 
 
 
