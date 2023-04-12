@@ -493,7 +493,7 @@ macro defclass(class, superclasses, direct_slots)
 
 
     quote
-        global $class = new(Class, $CLASS_NAME=$class_name, $DIRECT_SUPERCLASSES=$direct_superclasses, $DIRECT_SLOTS=$direct_slot_names, $INITFORMS=$direct_slot_initforms)
+        global $class = new(Class, $CLASS_NAME=$class_name, $DIRECT_SUPERCLASSES=[$(direct_superclasses...),], $DIRECT_SLOTS=$direct_slot_names, $INITFORMS=$direct_slot_initforms)
 
         $(method_definitions...)
 
@@ -506,7 +506,7 @@ macro defbuiltinclass(type)
     !@isdefined(type) && error("Builtin Julia type [$type] does not exist.")
     class_name = Symbol("_$type")
     esc(quote
-        @defclass($class_name, [$Top], [])
+        @defclass($class_name, [Top], [])
         function class_of(i::$type)
             return $class_name
         end
@@ -571,8 +571,8 @@ end
 #--------------------------------------------------------------------------
 
 @defclass(Person, [], [[name, reader = get_name, writer = set_name!],
-    [age, reader = get_age, writer = set_age!, initform=2],
-    [friend="Jorge", reader = get_friend, writer = set_friend!]])
+    [age, reader = get_age, writer = set_age!, initform = 2],
+    [friend = "Jorge", reader = get_friend, writer = set_friend!]])
 
 
 p = new(Person, name='a')
@@ -599,6 +599,14 @@ add(c1, c2)
 class_of(1)
 class_of("Dragon")
 
+
+#--------------------------------------------------------------------------
+
+@macroexpand1 @defclass(MoreComplexNumber, [ComplexNumber], [superreal])
+@defclass(MoreComplexNumber, [ComplexNumber], [superreal])
+@defclass(MoreComplexNumber2, [MoreComplexNumber, ComplexNumber], [superreal])
+
+class_direct_slots(MoreComplexNumber2)
 
 
 ####################################################################
