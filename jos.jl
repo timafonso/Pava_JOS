@@ -329,7 +329,7 @@ mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
         cpl = compute_cpl(instance)
         setproperty!(instance, CLASS_CPL, cpl)
 
-        slots, initforms = get_all_slots_and_initforms(getfield(instance, :class))
+        slots, initforms = get_indirect_slots_and_initforms(getfield(instance, :class))
         for (slot_name, initform) in zip(slots, initforms)
             value = get(initargs, slot_name, initform)
             push!(getfield(instance, :slots), value)
@@ -602,7 +602,7 @@ class_of("Dragon")
 
 #--------------------------------------------------------------------------
 
-@macroexpand1 @defclass(MoreComplexNumber, [ComplexNumber], [superreal])
+@macroexpand @defclass(MoreComplexNumber, [ComplexNumber], [superreal])
 @defclass(MoreComplexNumber, [ComplexNumber], [superreal])
 @defclass(MoreComplexNumber2, [MoreComplexNumber, ComplexNumber], [superreal])
 
