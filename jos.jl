@@ -20,10 +20,10 @@ const CLASS_OPTIONS_INITFORM = :initform
 
 #=========== Instance Struct =============#
 mutable struct Instance
-    class::Instance
     slots::Vector{}  # In classes index 1 is superclasses and index 2 is direct slots, ...
+    class::Instance
     Instance() = (x = new(); x.class = x; x.slots = []; x)
-    Instance(class) = new(class, [])
+    Instance(class) = (x = new(); x.class = class; x.slots = []; x)
     Instance(class, slots) = (x = new(); x.class = class; x.slots = slots; x)
 end
 
@@ -99,27 +99,27 @@ function get_slot(instance::Instance, field_name)
     return getters[field_name](instance)
 end
 
-
-function get_direct_slots(class::Instance)
-    idx = findfirst(==(DIRECT_SLOTS), CLASS_SLOTS)
-    getfield(class, :slots)[idx]
+function set_slot(instance::Instance, field_name, value)
+    class = getfield(instance, :class)
+    setters = get_slot(class, SETTERS)
+    setters[field_name](instance, value)
 end
 
-function get_direct_slots_and_initforms(class::Instance)
-    idx = findfirst(==(DIRECT_SLOTS), CLASS_SLOTS)
-    slots = getfield(class, :slots)[idx]
-    initforms = get_direct_initforms(class)
-    slots, initforms
+
+function get_direct_slots(class::Instance)
+    get_slot(class, DIRECT_SLOTS)
 end
 
 function get_direct_initforms(class::Instance)
-    idx = findfirst(==(INITFORMS), CLASS_SLOTS)
-    getfield(class, :slots)[idx]
+    get_slot(class, INITFORMS)
+end
+
+function get_direct_slots_and_initforms(class::Instance)
+    (get_direct_slots(class), get_direct_initforms(class))
 end
 
 function get_indirect_slots(class::Instance, get_initforms::Bool=false)
-    idx = findfirst(==(CLASS_CPL), CLASS_SLOTS)
-    cpl = getfield(class, :slots)[idx]
+    cpl = get_slot(class, CLASS_CPL)
 
     indirect_slots = []
     indirect_initforms = []
@@ -156,17 +156,11 @@ function get_all_slots(class::Instance)
     vcat(get_direct_slots(class), get_indirect_slots(class))
 end
 
-function get_field_index(instance::Instance, slot_name::Symbol)
-    slots = get_all_slots(getfield(instance, :class))
-    findfirst(==(slot_name), slots)
-end
-
 function Base.getproperty(instance::Instance, slot_name::Symbol)
     if hasfield(Instance, slot_name)
         getfield(instance, slot_name)
     else
-        idx = get_field_index(instance, slot_name)
-        getfield(instance, :slots)[idx]
+        get_slot(instance, slot_name)
     end
 end
 
@@ -174,8 +168,7 @@ function Base.setproperty!(instance::Instance, slot_name::Symbol, value)
     if hasfield(Instance, slot_name)
         setfield!(instance, slot_name, value)
     else
-        idx = get_field_index(instance, slot_name)
-        getfield(instance, :slots)[idx] = value
+        set_slot(instance, slot_name, value)
     end
 end
 
@@ -215,14 +208,6 @@ function method_specializers(instance)
     instance.specializers
 end
 
-function verified_collect(c)
-    collection = collect(c)
-    if (length(collection) == 0)
-        collection = [[], []]
-    end
-    return collection
-end
-
 ####################################################################
 #                         Generic (BOOTSTRAPPING)                  #
 ####################################################################
@@ -232,9 +217,8 @@ function _bootstrap_class_getters_and_setters(class::Instance, slot_names)
     class_slots = getfield(class, :slots)
 
     for i in eachindex(slot_names)
-        class_slots[CLASS_GETTERS_IDX][slot_names[i]] =
-            (inst) -> (println(i); getfield(inst, :slots)[i])
-        class_slots[CLASS_SETTERS_IDX][slot_names[i]] = (inst, v) -> getfield(inst, :slots)[i] = v
+        class_slots[CLASS_GETTERS_IDX][slot_names[i]] = (inst) -> (getfield(inst, :slots)[i])
+        class_slots[CLASS_SETTERS_IDX][slot_names[i]] = (inst, v) -> (println("Setter $(slot_names[i]) ; idx: $i"); println("getfield(inst, :slots)[$i] = $v)"); getfield(inst, :slots)[i] = v)
     end
 end
 
@@ -579,101 +563,101 @@ end
 
 
 
-Shape = new(Class, name=:Shape, direct_slots=[])
-Device = new(Class, name=:Device, direct_superclasses=[Object], direct_slots=[])
-Line = new(Class, name=:Line, direct_superclasses=[Shape, Object], direct_slots=[:from, :to])
-Circle = new(Class, name=:Circle, direct_superclasses=[Shape, Object], direct_slots=[:center, :radius])
-Screen = new(Class, name=:Screen, direct_superclasses=[Device, Object], direct_slots=[])
-Printer = new(Class, name=:Printer, direct_superclasses=[Device, Object], direct_slots=[])
-ColoredPrinter = new(Class, name=:ColoredPrinter, direct_superclasses=[Printer, Object], direct_slots=[:ink])
-ColorMixin = new(Class, name=:ColorMixin, direct_superclasses=[Object], direct_slots=[:color])
-ColoredLine = new(Class, name=:ColoredLine, direct_superclasses=[ColorMixin, Line, Object], direct_slots=[])
-ColoredCircle = new(Class, name=:ColoredCircle, direct_superclasses=[ColorMixin, Circle, Object], direct_slots=[])
+# Shape = new(Class, name=:Shape, direct_slots=[])
+# Device = new(Class, name=:Device, direct_superclasses=[Object], direct_slots=[])
+# Line = new(Class, name=:Line, direct_superclasses=[Shape, Object], direct_slots=[:from, :to])
+# Circle = new(Class, name=:Circle, direct_superclasses=[Shape, Object], direct_slots=[:center, :radius])
+# Screen = new(Class, name=:Screen, direct_superclasses=[Device, Object], direct_slots=[])
+# Printer = new(Class, name=:Printer, direct_superclasses=[Device, Object], direct_slots=[])
+# ColoredPrinter = new(Class, name=:ColoredPrinter, direct_superclasses=[Printer, Object], direct_slots=[:ink])
+# ColorMixin = new(Class, name=:ColorMixin, direct_superclasses=[Object], direct_slots=[:color])
+# ColoredLine = new(Class, name=:ColoredLine, direct_superclasses=[ColorMixin, Line, Object], direct_slots=[])
+# ColoredCircle = new(Class, name=:ColoredCircle, direct_superclasses=[ColorMixin, Circle, Object], direct_slots=[])
 
-@defgeneric get_device_color(cp)
-create_method(get_device_color, [ColoredPrinter], (cp) -> (cp.ink))
+# @defgeneric get_device_color(cp)
+# create_method(get_device_color, [ColoredPrinter], (cp) -> (cp.ink))
 
-_set_device_color! = new(GenericFunction, name=:_set_device_color!, args=[:cp, :c], methods=[])
-set_device_color! = new(GenericFunction, name=:set_device_color!, args=[:cp, :c], methods=[])
-create_method(_set_device_color!, [ColoredPrinter, Top], (cp, c) -> (cp.ink = c))
-create_method(set_device_color!, [ColoredPrinter, Top], (cp, c) -> (println("Changing printer ink color to $c"); _set_device_color!(cp, c)))
+# _set_device_color! = new(GenericFunction, name=:_set_device_color!, args=[:cp, :c], methods=[])
+# set_device_color! = new(GenericFunction, name=:set_device_color!, args=[:cp, :c], methods=[])
+# create_method(_set_device_color!, [ColoredPrinter, Top], (cp, c) -> (cp.ink = c))
+# create_method(set_device_color!, [ColoredPrinter, Top], (cp, c) -> (println("Changing printer ink color to $c"); _set_device_color!(cp, c)))
 
-draw = new(GenericFunction, name=:draw, args=[:shape, :device], methods=[])
-create_method(draw, [Line, Screen], (l, s) -> println("Drawing a Line on Screen"))
-create_method(draw, [Circle, Screen], (c, s) -> println("Drawing a Circle on Screen"))
-create_method(draw, [Line, Printer], (l, p) -> println("Drawing a Line on Printer"))
-create_method(draw, [Circle, Printer], (c, p) -> println("Drawing a Circle on Printer"))
-create_method(draw, [ColorMixin, Device], function (cm, d)
-    previous_color = get_device_color(d)
-    set_device_color!(d, cm.color)
-    call_next_method()
-    set_device_color!(d, previous_color)
-end)
+# draw = new(GenericFunction, name=:draw, args=[:shape, :device], methods=[])
+# create_method(draw, [Line, Screen], (l, s) -> println("Drawing a Line on Screen"))
+# create_method(draw, [Circle, Screen], (c, s) -> println("Drawing a Circle on Screen"))
+# create_method(draw, [Line, Printer], (l, p) -> println("Drawing a Line on Printer"))
+# create_method(draw, [Circle, Printer], (c, p) -> println("Drawing a Circle on Printer"))
+# create_method(draw, [ColorMixin, Device], function (cm, d)
+#     previous_color = get_device_color(d)
+#     set_device_color!(d, cm.color)
+#     call_next_method()
+#     set_device_color!(d, previous_color)
+# end)
 
-show(draw.methods)
+# show(draw.methods)
 
-let devices = [new(Screen), new(Printer)],
-    shapes = [new(Line), new(Circle)]
+# let devices = [new(Screen), new(Printer)],
+#     shapes = [new(Line), new(Circle)]
 
-    for device in devices
-        for shape in shapes
-            draw(shape, device)
-        end
-    end
-end
+#     for device in devices
+#         for shape in shapes
+#             draw(shape, device)
+#         end
+#     end
+# end
 
-let shapes = [new(Line), new(ColoredCircle, color=:red), new(ColoredLine, color=:blue)],
-    printer = new(ColoredPrinter, ink=:black)
+# let shapes = [new(Line), new(ColoredCircle, color=:red), new(ColoredLine, color=:blue)],
+#     printer = new(ColoredPrinter, ink=:black)
 
-    for shape in shapes
-        draw(shape, printer)
-    end
-end
+#     for shape in shapes
+#         draw(shape, printer)
+#     end
+# end
 
-#--------------------------------------------------------------------------
+# #--------------------------------------------------------------------------
 
-@defclass(Person, [], [[name, reader = get_name, writer = set_name!],
-    [age, reader = get_age, writer = set_age!, initform = 2],
-    [friend = "Jorge", reader = get_friend, writer = set_friend!]])
-
-
-p = new(Person, name='a')
-display(p.slots)
-
-@defgeneric add(a, b)
-@defmethod add(a::ComplexNumber, b::ComplexNumber) =
-    new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
-
-show(add.methods)
-c1 = new(ComplexNumber, real=1, imag=2)
-c2 = new(ComplexNumber, real=1, imag=2)
-add(c1, c2)
-
-#--------------------------------------------------------------------------
-
-@macroexpand @defbuiltinclass(Int64)
-@defbuiltinclass(Int64)
-@defbuiltinclass(String)
+# @defclass(Person, [], [[name, reader = get_name, writer = set_name!],
+#     [age, reader = get_age, writer = set_age!, initform = 2],
+#     [friend = "Jorge", reader = get_friend, writer = set_friend!]])
 
 
-class_of(1)
-class_of("Dragon")
+# p = new(Person, name='a')
+# display(p.slots)
+
+# @defgeneric add(a, b)
+# @defmethod add(a::ComplexNumber, b::ComplexNumber) =
+#     new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
+
+# show(add.methods)
+# c1 = new(ComplexNumber, real=1, imag=2)
+# c2 = new(ComplexNumber, real=1, imag=2)
+# add(c1, c2)
+
+# #--------------------------------------------------------------------------
+
+# @macroexpand @defbuiltinclass(Int64)
+# @defbuiltinclass(Int64)
+# @defbuiltinclass(String)
 
 
-#--------------------------------------------------------------------------
-
-@macroexpand @defclass(MoreComplexNumber, [ComplexNumber], [superreal])
-@defclass(MoreComplexNumber, [ComplexNumber], [superreal])
-@defclass(MoreComplexNumber2, [MoreComplexNumber, ComplexNumber], [superreal])
-
-class_direct_slots(MoreComplexNumber2)
+# class_of(1)
+# class_of("Dragon")
 
 
-####################################################################
-#                       Expected Result                            #
-####################################################################
+# #--------------------------------------------------------------------------
 
-#Drawing a Line on Screen
-#Drawing a Circle on Screen
-#Drawing a Line on Printer
-#Drawing a Circle on Printer
+# @macroexpand @defclass(MoreComplexNumber, [ComplexNumber], [superreal])
+# @defclass(MoreComplexNumber, [ComplexNumber], [superreal])
+# @defclass(MoreComplexNumber2, [MoreComplexNumber, ComplexNumber], [superreal])
+
+# class_direct_slots(MoreComplexNumber2)
+
+
+# ####################################################################
+# #                       Expected Result                            #
+# ####################################################################
+
+# #Drawing a Line on Screen
+# #Drawing a Circle on Screen
+# #Drawing a Line on Printer
+# #Drawing a Circle on Printer
