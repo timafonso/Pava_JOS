@@ -6,9 +6,14 @@ const DIRECT_SUPERCLASSES = :direct_superclasses
 const DIRECT_SLOTS = :direct_slots
 const CLASS_CPL = :cpl
 const INITFORMS = :initforms
-const METACLASS = :metaclass
-const CLASS_SLOTS = [CLASS_NAME, DIRECT_SUPERCLASSES, DIRECT_SLOTS, CLASS_CPL, INITFORMS, METACLASS]
+const GETTERS = :getters
+const SETTERS = :setters
+const CLASS_SLOTS = [DIRECT_SLOTS, CLASS_NAME, DIRECT_SUPERCLASSES, CLASS_CPL, INITFORMS, GETTERS, SETTERS]
+const CLASS_DIRECT_SLOTS_IDX = findfirst(==(DIRECT_SLOTS), CLASS_SLOTS)
+const CLASS_GETTERS_IDX = findfirst(==(GETTERS), CLASS_SLOTS)
+const CLASS_SETTERS_IDX = findfirst(==(SETTERS), CLASS_SLOTS)
 
+const METACLASS = :metaclass
 const CLASS_OPTIONS_READER = :reader
 const CLASS_OPTIONS_WRITER = :writer
 const CLASS_OPTIONS_INITFORM = :initform
@@ -39,38 +44,62 @@ Class = Instance()
 Top = Instance(Class)
 Object = Instance(Class)
 
+push!(Class.slots, CLASS_SLOTS)                         # direct slots
 push!(Class.slots, :Class)                              # name
 push!(Class.slots, [Object])                            # superclasses
-push!(Class.slots, CLASS_SLOTS)                         # direct slots
 push!(Class.slots, [Class, Object, Top])                # cpl
 push!(Class.slots, [missing for _ in CLASS_SLOTS])      # initforms
+push!(Class.slots, Dict())                                  # getters
+push!(Class.slots, Dict())                                  # setters
 
+push!(Top.slots, [])                    # direct slots
 push!(Top.slots, :Top)                  # name
 push!(Top.slots, [])                    # superclasses
-push!(Top.slots, [])                    # direct slots
 push!(Top.slots, [Top])                 # cpl
 push!(Top.slots, [])                    # initforms
+push!(Top.slots, Dict())                  # getters
+push!(Top.slots, Dict())                  # setters
 
 
+
+push!(Object.slots, [])                 # direct slots
 push!(Object.slots, :Object)            # name
 push!(Object.slots, [Top])              # superclasses
-push!(Object.slots, [])                 # direct slots
 push!(Object.slots, [Object, Top])           # cpl
 push!(Object.slots, [])                 # initforms
+push!(Object.slots, Dict())                  # getters
+push!(Object.slots, Dict())                  # setters
 
 #-------------- Generic Functions and Methods -----------------------
-GenericFunction = Instance(Class, [:GenericFunction, [Object], [:name, :args, :methods]])
+GENERIC_FUNCTION_SLOTS = [:name, :args, :methods]
+GenericFunction = Instance(Class, [GENERIC_FUNCTION_SLOTS, :GenericFunction, [Object]])
 push!(GenericFunction.slots, [GenericFunction, Object, Top]) #cpl
 push!(GenericFunction.slots, [missing, missing, missing]) #initforms
-MultiMethod = Instance(Class, [:MultiMethod, [Object], [:specializers, :procedure, :generic_function]])
-push!(MultiMethod.slots, [MultiMethod, Object, Top]) #cpl
-push!(MultiMethod.slots, [missing, missing, missing]) #initforms
+push!(GenericFunction.slots, Dict())                  # getters
+push!(GenericFunction.slots, Dict())                  # setters
 
-####################################################################
+MULTI_METHOD_SLOTS = [:specializers, :procedure, :generic_function]
+MultiMethod = Instance(Class, [MULTI_METHOD_SLOTS, :MultiMethod, [Object]])
+push!(MultiMethod.slots, [MultiMethod, Object, Top])    #cpl
+push!(MultiMethod.slots, [missing, missing, missing])   #initforms
+push!(MultiMethod.slots, Dict())                    # getters
+push!(MultiMethod.slots, Dict())                    # setters
+
 
 ####################################################################
 #                            UTILS                                 #
 ####################################################################
+function get_slot(instance::Instance, field_name)
+    class = getfield(instance, :class)
+    if (class === Class)
+        getters = getfield(Class, :slots)[CLASS_GETTERS_IDX]
+    else
+        getters = get_slot(class, GETTERS)
+    end
+    return getters[field_name](instance)
+end
+
+
 function get_direct_slots(class::Instance)
     idx = findfirst(==(DIRECT_SLOTS), CLASS_SLOTS)
     getfield(class, :slots)[idx]
@@ -193,6 +222,32 @@ function verified_collect(c)
     end
     return collection
 end
+
+####################################################################
+#                         Generic (BOOTSTRAPPING)                  #
+####################################################################
+
+#-------------- Bootstrapping Getters and Setters -----------------------
+function _bootstrap_class_getters_and_setters(class::Instance, slot_names)
+    class_slots = getfield(class, :slots)
+
+    for i in eachindex(slot_names)
+        class_slots[CLASS_GETTERS_IDX][slot_names[i]] =
+            (inst) -> (println(i); getfield(inst, :slots)[i])
+        class_slots[CLASS_SETTERS_IDX][slot_names[i]] = (inst, v) -> getfield(inst, :slots)[i] = v
+    end
+end
+
+# Class
+_bootstrap_class_getters_and_setters(Class, CLASS_SLOTS)
+
+# GenericFunctions
+generic_functions_slots_names = vcat(GENERIC_FUNCTION_SLOTS, CLASS_SLOTS)
+_bootstrap_class_getters_and_setters(GenericFunction, generic_functions_slots_names)
+
+# MultiMethods
+multi_method_slots_names = vcat(MULTI_METHOD_SLOTS, CLASS_SLOTS)
+_bootstrap_class_getters_and_setters(MultiMethod, multi_method_slots_names)
 
 ####################################################################
 
@@ -329,11 +384,11 @@ mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
         cpl = compute_cpl(instance)
         setproperty!(instance, CLASS_CPL, cpl)
 
-        slots, initforms = get_indirect_slots_and_initforms(getfield(instance, :class))
-        for (slot_name, initform) in zip(slots, initforms)
-            value = get(initargs, slot_name, initform)
-            push!(getfield(instance, :slots), value)
-        end
+        #slots, initforms = get_indirect_slots_and_initforms(getfield(instance, :class))
+        #for (slot_name, initform) in zip(slots, initforms)
+        #    value = get(initargs, slot_name, initform)
+        #    push!(getfield(instance, :slots), value)
+        #end
     end, initialize])
 push!(initialize.methods, mm)
 
@@ -445,10 +500,14 @@ macro defmethod(method)
     end
 end
 
-macro defclass(class, superclasses, direct_slots)
+macro defclass(class, superclasses, direct_slots, metaclass_expr=missing)
     class_name = Expr(:quote, class)
     direct_superclasses = superclasses.args
 
+    metaclass = :Class
+    if (typeof(metaclass_expr) == Expr && metaclass_expr.args[1] == METACLASS)
+        metaclass = metaclass_expr.args[2]
+    end
 
     direct_slot_names = []
     direct_slot_initforms = []
@@ -493,7 +552,7 @@ macro defclass(class, superclasses, direct_slots)
 
 
     quote
-        global $class = new(Class, $CLASS_NAME=$class_name, $DIRECT_SUPERCLASSES=[$(direct_superclasses...),], $DIRECT_SLOTS=$direct_slot_names, $INITFORMS=$direct_slot_initforms)
+        global $class = new($metaclass, $CLASS_NAME=$class_name, $DIRECT_SUPERCLASSES=[$(direct_superclasses...),], $DIRECT_SLOTS=$direct_slot_names, $INITFORMS=$direct_slot_initforms)
 
         $(method_definitions...)
 
@@ -516,6 +575,9 @@ end
 ####################################################################
 #                               TESTING                            #
 ####################################################################
+
+
+
 
 Shape = new(Class, name=:Shape, direct_slots=[])
 Device = new(Class, name=:Device, direct_superclasses=[Object], direct_slots=[])
@@ -577,8 +639,6 @@ end
 
 p = new(Person, name='a')
 display(p.slots)
-
-@defclass(ComplexNumber, [], [real, imag])
 
 @defgeneric add(a, b)
 @defmethod add(a::ComplexNumber, b::ComplexNumber) =

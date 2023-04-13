@@ -7,4 +7,4 @@ Julia Object System
 
 
 ### TODO
-- test init forms
+- classes are instances of the metaclass BuiltInClass
