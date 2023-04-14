@@ -5,8 +5,11 @@ Julia Object System
 
 - Class redefinition, should update already existing instances class? Extra?
 
+### Extensions
+- if we do method combination initialize can use call_next_method and OBJECT init be :before
 
 ### TODO
 - classes are instances of the metaclass BuiltInClass
 - Initforms
 - Methods -> dictionary
+- GenericFunctions e Methods directSlots as CONSTS
