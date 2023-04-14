@@ -13,6 +13,16 @@ const CLASS_DIRECT_SLOTS_IDX = findfirst(==(DIRECT_SLOTS), CLASS_SLOTS)
 const CLASS_GETTERS_IDX = findfirst(==(GETTERS), CLASS_SLOTS)
 const CLASS_SETTERS_IDX = findfirst(==(SETTERS), CLASS_SLOTS)
 
+const GENERIC_FUNCTION_NAME = :name
+const GENERIC_FUNCTION_ARGS = :args
+const GENERIC_FUNCTION_METHODS = :methods
+GENERIC_FUNCTION_SLOTS = [GENERIC_FUNCTION_NAME, GENERIC_FUNCTION_ARGS, GENERIC_FUNCTION_METHODS]
+
+const MULTI_METHOD_SPECIALIZERS = :specializers
+const MULTI_METHOD_PROCEDURE = :procedure
+const MULTI_METHOD_GENERIC_FUNCTION = :generic_function
+MULTI_METHOD_SLOTS = [MULTI_METHOD_SPECIALIZERS, MULTI_METHOD_PROCEDURE, MULTI_METHOD_GENERIC_FUNCTION]
+
 const METACLASS = :metaclass
 const CLASS_OPTIONS_READER = :reader
 const CLASS_OPTIONS_WRITER = :writer
@@ -71,14 +81,12 @@ push!(Object.slots, Dict())                  # getters
 push!(Object.slots, Dict())                  # setters
 
 #-------------- Generic Functions and Methods -----------------------
-GENERIC_FUNCTION_SLOTS = [:name, :args, :methods]
 GenericFunction = Instance(Class, [GENERIC_FUNCTION_SLOTS, :GenericFunction, [Object]])
 push!(GenericFunction.slots, [GenericFunction, Object, Top]) #cpl
 push!(GenericFunction.slots, [missing, missing, missing]) #initforms
 push!(GenericFunction.slots, Dict())                  # getters
 push!(GenericFunction.slots, Dict())                  # setters
 
-MULTI_METHOD_SLOTS = [:specializers, :procedure, :generic_function]
 MultiMethod = Instance(Class, [MULTI_METHOD_SLOTS, :MultiMethod, [Object]])
 push!(MultiMethod.slots, [MultiMethod, Object, Top])    #cpl
 push!(MultiMethod.slots, [missing, missing, missing])   #initforms
@@ -105,55 +113,18 @@ function set_slot(instance::Instance, field_name, value)
     setters[field_name](instance, value)
 end
 
-
-function get_direct_slots(class::Instance)
-    get_slot(class, DIRECT_SLOTS)
-end
-
-function get_direct_initforms(class::Instance)
-    get_slot(class, INITFORMS)
-end
-
-function get_direct_slots_and_initforms(class::Instance)
-    (get_direct_slots(class), get_direct_initforms(class))
-end
-
-function get_indirect_slots(class::Instance, get_initforms::Bool=false)
-    cpl = get_slot(class, CLASS_CPL)
-
-    indirect_slots = []
-    indirect_initforms = []
-    for class_cpl in cpl
-        if class_cpl == class
-            continue
-        end
-
-        if get_initforms
-            slots, initforms = get_direct_slots_and_initforms(class_cpl)
-            indirect_initforms = vcat(indirect_initforms, initforms)
-        else
-            slots = get_direct_slots(class_cpl)
-        end
-
-        indirect_slots = vcat(indirect_slots, slots)
-    end
-
-    get_initforms ? (indirect_slots, indirect_initforms) : indirect_slots
-end
-
-function get_indirect_slots_and_initforms(class::Instance)
-    get_indirect_slots(class, true)
-end
-
-
-function get_all_slots_and_initforms(class::Instance)
-    slots, initforms = get_direct_slots_and_initforms(class)
-    indirect_slots, indirect_initforms = get_indirect_slots_and_initforms(class)
-    vcat(slots, indirect_slots), vcat(initforms, indirect_initforms)
-end
-
 function get_all_slots(class::Instance)
-    vcat(get_direct_slots(class), get_indirect_slots(class))
+    compute_slots(class)
+end
+
+function get_all_initforms(class::Instance)
+    vcat(map(class_initforms, class_cpl(class))...)
+end
+
+function get_all_slots_and_initforms(instance::Instance)
+    slots = get_all_slots(instance)
+    initforms = get_all_initforms(instance)
+    return (slots, initforms)
 end
 
 function Base.getproperty(instance::Instance, slot_name::Symbol)
@@ -181,11 +152,15 @@ function class_of(instance)
 end
 
 function class_name(instance)
-    instance.name
+    getproperty(instance, CLASS_NAME)
 end
 
 function class_direct_slots(instance)
-    instance.direct_slots
+    getproperty(instance, DIRECT_SLOTS)
+end
+
+function class_initforms(instance)
+    getproperty(instance, INITFORMS)
 end
 
 function class_slots(instance)
@@ -193,26 +168,25 @@ function class_slots(instance)
 end
 
 function class_direct_superclasses(instance)
-    instance.direct_superclasses
+    getproperty(instance, DIRECT_SUPERCLASSES)
 end
 
 function class_cpl(instance)
-    instance.cpl
+    getproperty(instance, CLASS_CPL)
 end
 
 function generic_methods(instance)
-    instance.methods
+    getproperty(instance, GENERIC_FUNCTION_METHODS)
 end
 
 function method_specializers(instance)
-    instance.specializers
+    getproperty(instance, MULTI_METHOD_SPECIALIZERS)
 end
 
 # ------------------------------------------------------------------
 function add_method(generic_function, multi_method)
     key = (map(x -> x.name, multi_method.specializers)...,)
     methods = generic_function.methods
-    dump(key)
     methods[key] = multi_method
 end
 
@@ -305,7 +279,6 @@ function call_next_method()
         (length(method_stack.methods) == 0) && no_applicable_method(method_stack.generic_function, method_stack.args)
 
         next_method = popfirst!(method_stack.methods)
-        # println("Calling method = $(next_method.generic_function.name)($(map((x)->x.name, next_method.specializers)))")
         next_method.procedure(method_stack.args...)
     end
 end
@@ -380,12 +353,9 @@ mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
         direct_slots, initforms = get_all_slots_and_initforms(getfield(instance, :class))
         for (slot_name, initform) in zip(direct_slots, initforms)
             value = get(initargs, slot_name, initform)
-            if (slot_name == DIRECT_SUPERCLASSES)
-                if (value === missing)
-                    value = [Object]
-                elseif (Object ∉ value)
-                    push!(value, Object)
-                end
+            if (slot_name == DIRECT_SUPERCLASSES &&
+                (value === missing || value == []))
+                value = [Object]
             end
 
             push!(getfield(instance, :slots), value)
@@ -395,18 +365,8 @@ mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
         cpl = compute_cpl(instance)
         setproperty!(instance, CLASS_CPL, cpl)
 
-        # # Indirect class slots
-        # indirect_slots, initforms = get_indirect_slots_and_initforms(getfield(instance, :class))
-        # for (slot_name, initform) in zip(indirect_slots, initforms)
-        #    value = get(initargs, slot_name, initform)
-        #    push!(getfield(instance, :slots), value)
-        # end
-
         # Getters and setters
-        instance_direct_slots = get_direct_slots(instance)
-        instance_indirect_slots = get_indirect_slots(instance)
-
-        all_slots = vcat(instance_direct_slots, instance_indirect_slots)
+        all_slots = get_all_slots(instance)
         getters, setters = (Dict(), Dict())
         for i in eachindex(all_slots)
             getter, setter = compute_getter_and_setter(instance, all_slots[i], i)
@@ -467,18 +427,10 @@ create_method(print_object, [MultiMethod, Top], (mm, io) -> (names = getproperty
 function Base.show(io::IO, obj::Instance)
     print_object(obj, io)
 end
-####################################################################
-
-####################################################################
 
 ####################################################################
 #                               MACROS                             #
 ####################################################################
-
-# @defclass(Person, [],
-#       [[name='', reader=get_name, writer=set_name!],
-#       [age, reader=get_age, writer=set_age!, initform=0],
-#       [friend, reader=get_friend, writer=set_friend!]],
 
 macro defgeneric(generic_function)
 
@@ -514,7 +466,7 @@ macro defmethod(method)
 
     quote
         if (!@isdefined $name)
-            global $name = new(GenericFunction, name=$generic_function_name, args=$arguments, methods=[])
+            global $name = new(GenericFunction, name=$generic_function_name, args=$arguments, methods=Dict())
         end
         create_method($name, [$(specializers...),], ($(arguments...),) -> $body)
     end
@@ -601,11 +553,160 @@ end
 #                               TESTING                            #
 ####################################################################
 
-@defclass(ComplexNumber, [], [real, imag])
-c = new(ComplexNumber, real=1, imag=1)
 
-@defmethod add(a::ComplexNumber, b::ComplexNumber) =
-    new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
+@defmethod compute_slots(class::Class) =
+    vcat(map(class_direct_slots, class_cpl(class))...)
+
+
+@defclass(Foo, [], [[a = 1], [b = 2]])
+@defclass(Bar, [], [[b = 3], [c = 4]])
+@defclass(FooBar, [Foo, Bar], [[a = 5], [d = 6]])
+@defclass(AvoidCollisionsClass, [Class], [])
+
+@defmethod compute_slots(class::AvoidCollisionsClass) =
+    let slots = call_next_method(),
+        duplicates = symdiff(slots, unique(slots))
+
+        isempty(duplicates) ?
+        slots :
+        error("Multiple occurrences of slots: $(join(map(string, duplicates), ", "))")
+    end
+
+# @defclass(FooBar2, [Foo, Bar], [[a = 5], [d = 6]], metaclass = AvoidCollisionsClass)
+
+#--------------------------------------------------------------------------
+
+undo_trail = []
+store_previous(object, slot, value) = push!(undo_trail, (object, slot, value))
+current_state() = length(undo_trail)
+restore_state(state) =
+    while length(undo_trail) != state
+        restore(pop!(undo_trail)...)
+    end
+save_previous_value = true
+restore(object, slot, value) =
+    let previous_save_previous_value = save_previous_value
+        global save_previous_value = false
+        try
+            setproperty!(object, slot, value)
+        finally
+            global save_previous_value = previous_save_previous_value
+        end
+    end
+
+@defclass(UndoableClass, [Class], [])
+
+@defmethod compute_getter_and_setter(class::UndoableClass, slot, idx) =
+    let (getter, setter) = call_next_method()
+        (getter,
+            (o, v) -> begin
+                if save_previous_value
+                    store_previous(o, slot, getter(o))
+                end
+                setter(o, v)
+            end)
+    end
+
+@defclass(Person, [],
+    [name, age, friend],
+    metaclass = UndoableClass)
+@defmethod print_object(p::Person, io) =
+    print(io, "[$(p.name), $(p.age)$(ismissing(p.friend) ? "" : " with friend $(p.friend)")]")
+
+p0 = new(Person, name="John", age=21)
+p1 = new(Person, name="Paul", age=23)
+#Paul has a friend named John
+p1.friend = p0
+println(p1) #[Paul,23 with friend [John,21]]
+state0 = current_state()
+#32 years later, John changed his name to 'Louis' and got a friend
+p0.age = 53
+p1.age = 55
+p0.name = "Louis"
+p0.friend = new(Person, name="Mary", age=19)
+println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
+state1 = current_state()
+#15 years later, John (hum, I mean 'Louis') died
+p1.age = 70
+p1.friend = missing
+println(p1) #[Paul,70]
+#Let's go back in time
+restore_state(state1)
+println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
+#and even earlier
+restore_state(state0)
+println(p1) #[Paul,23 with friend [John,21]]
+
+#--------------------------------------------------------------------------
+
+@defclass(CountingClass, [Class], [[counter = 0]])
+
+@defmethod allocate_instance(class::CountingClass) = begin
+    class.counter += 1
+    call_next_method()
+end
+
+#--------------------------------------------------------------------------
+
+# @defclass(UndoableCountingClass,
+#     [UndoableClass, CountingClass],
+#     [])
+
+# @defclass(UCPerson, [],
+#     [name, age, friend],
+#     metaclass = UndoableCountingClass)
+
+# p0 = new(UCPerson, name="John", age=21)
+
+#--------------------------------------------------------------------------
+
+
+@defclass(UndoableCollisionAvoidingCountingClass,
+    [UndoableClass, AvoidCollisionsClass, CountingClass],
+    [])
+@defclass(NamedThing, [], [name])
+# @defclass(Person, [NamedThing],
+#     [name, age, friend],
+#     metaclass = UndoableCollisionAvoidingCountingClass)
+@defclass(Person, [NamedThing],
+    [age, friend],
+    metaclass = UndoableCollisionAvoidingCountingClass)
+@defmethod print_object(p::Person, io) =
+    print(io, "[$(p.name), $(p.age)$(ismissing(p.friend) ? "" : " with friend $(p.friend)")]")
+
+p0 = new(Person, name="John", age=21)
+p1 = new(Person, name="Paul", age=23)
+#Paul has a friend named John
+p1.friend = p0
+println(p1) #[Paul,23 with friend [John,21]]
+state0 = current_state()
+#32 years later, John changed his name to 'Louis' and got a friend
+p0.age = 53
+p1.age = 55
+p0.name = "Louis"
+p0.friend = new(Person, name="Mary", age=19)
+println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
+state1 = current_state()
+#15 years later, John (hum, I mean 'Louis') died
+p1.age = 70
+p1.friend = missing
+println(p1) #[Paul,70]
+#Let's go back in time
+restore_state(state1)
+println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
+#and even earlier
+restore_state(state0)
+println(p1) #[Paul,23 with friend [John,21]]
+
+Person.counter
+
+#--------------------------------------------------------------------------
+
+# @defclass(ComplexNumber, [], [real, imag])
+# c = new(ComplexNumber, real=1, imag=1)
+
+# @defmethod add(a::ComplexNumber, b::ComplexNumber) =
+#     new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
 
 # @defclass(MoreComplexNumber, [ComplexNumber], [morereal])
 # mc = new(MoreComplexNumber, morereal=44, real=1, imag=1)
@@ -624,78 +725,6 @@ c = new(ComplexNumber, real=1, imag=1)
 # show("end")
 
 
-# #--------------------------------------------------------------------------
-# undo_trail = []
-# store_previous(object, slot, value) = push!(undo_trail, (object, slot, value))
-# current_state() = length(undo_trail)
-# restore_state(state) =
-#     while length(undo_trail) != state
-#         restore(pop!(undo_trail)...)
-#     end
-# save_previous_value = true
-# restore(object, slot, value) =
-#     let previous_save_previous_value = save_previous_value
-#         global save_previous_value = false
-#         try
-#             setproperty!(object, slot, value)
-#         finally
-#             global save_previous_value = previous_save_previous_value
-#         end
-#     end
-
-# @defclass(UndoableClass, [Class], [])
-
-# @defmethod compute_getter_and_setter(class::UndoableClass, slot, idx) =
-#     let (getter, setter) = call_next_method()
-#         (getter,
-#             (o, v) -> begin
-#                 if save_previous_value
-#                     store_previous(o, slot, getter(o))
-#                 end
-#                 setter(o, v)
-#             end)
-#     end
-
-# @defclass(Person, [],
-#     [name, age, friend],
-#     metaclass = UndoableClass)
-# @defmethod print_object(p::Person, io) =
-#     print(io, "[$(p.name), $(p.age)$(ismissing(p.friend) ? "" : " with friend $(p.friend)")]")
-
-# p0 = new(Person, name="John", age=21)
-# p1 = new(Person, name="Paul", age=23)
-# #Paul has a friend named John
-# p1.friend = p0
-# println(p1) #[Paul,23 with friend [John,21]]
-# state0 = current_state()
-# #32 years later, John changed his name to 'Louis' and got a friend
-# p0.age = 53
-# p1.age = 55
-# p0.name = "Louis"
-# p0.friend = new(Person, name="Mary", age=19)
-# println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
-# state1 = current_state()
-# #15 years later, John (hum, I mean 'Louis') died
-# p1.age = 70
-# p1.friend = missing
-# println(p1) #[Paul,70]
-# #Let's go back in time
-# restore_state(state1)
-# println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
-# #and even earlier
-# restore_state(state0)
-# println(p1) #[Paul,23 with friend [John,21]]
-
-# #--------------------------------------------------------------------------
-# @defclass(AvoidCollisionsClass, [Class], [])
-# @defmethod compute_slots(class::AvoidCollisionsClass) =
-#     let slots = call_next_method(),
-#         duplicates = symdiff(slots, unique(slots))
-
-#         isempty(duplicates) ?
-#         slots :
-#         error("Multiple occurrences of slots: $(join(map(string, duplicates), ", "))")
-#     end
 # #--------------------------------------------------------------------------
 
 
