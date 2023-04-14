@@ -208,6 +208,14 @@ function method_specializers(instance)
     instance.specializers
 end
 
+# ------------------------------------------------------------------
+function add_method(generic_function, multi_method)
+    key = (map(x -> x.name, multi_method.specializers)...,)
+    methods = generic_function.methods
+    dump(key)
+    methods[key] = multi_method
+end
+
 ####################################################################
 #                         Generic (BOOTSTRAPPING)                  #
 ####################################################################
@@ -269,7 +277,7 @@ end
 function get_applicable_methods(generic_f, arg_types)
     applicable_methods = []
 
-    for method in generic_f.methods
+    for (_, method) in generic_f.methods
         if (is_applicable_method(method, arg_types))
             push!(applicable_methods, method)
         end
@@ -328,26 +336,34 @@ end
 
 ##################### Initialize Instance ##########################
 # ALLOCATE INSTANCE ------------------------------------------------
-allocate_instance = Instance(GenericFunction, [:allocate_instance, [:arg], []])
+allocate_instance = Instance(GenericFunction, [:allocate_instance, [:arg], Dict()])
 # Objects 
 mm = Instance(MultiMethod, [[Object], (obj) -> (Instance(obj)), allocate_instance])
-push!(allocate_instance.methods, mm)
+add_method(allocate_instance, mm)
 # Classes 
 mm = Instance(MultiMethod, [[Class], (cls) -> (Instance(cls)), allocate_instance])
-push!(allocate_instance.methods, mm)
+add_method(allocate_instance, mm)
 
 # COMPUTE GETTERS AND SETTERS -------------------------------------------------------
-compute_getter_and_setter = Instance(GenericFunction, [:compute_getter_and_setter, [:class, :slot, :idx], []])
+compute_getter_and_setter = Instance(GenericFunction, [:compute_getter_and_setter, [:class, :slot, :idx], Dict()])
 # Class 
 mm = Instance(MultiMethod, [[Class, Top, Top], function (class, slot, idx)
         getter = (inst) -> (getfield(inst, :slots)[idx])
         setter = (inst, v) -> (getfield(inst, :slots)[idx] = v)
         return (getter, setter)
     end, compute_getter_and_setter])
-push!(compute_getter_and_setter.methods, mm)
+add_method(compute_getter_and_setter, mm)
+
+# COMPUTE Slots -------------------------------------------------------
+compute_slots = Instance(GenericFunction, [:compute_slots, [:class], Dict()])
+# Class 
+mm = Instance(MultiMethod, [[Class], function (class)
+        vcat(map(class_direct_slots, class_cpl(class))...)
+    end, compute_slots])
+add_method(compute_slots, mm)
 
 # INITIALIZE -------------------------------------------------------
-initialize = Instance(GenericFunction, [:initialize, [:instance, :initargs], []])
+initialize = Instance(GenericFunction, [:initialize, [:instance, :initargs], Dict()])
 # Objects 
 mm = Instance(MultiMethod, [[Object, Top], function (instance, initargs)
         slots, initforms = get_all_slots_and_initforms(getfield(instance, :class))
@@ -356,7 +372,7 @@ mm = Instance(MultiMethod, [[Object, Top], function (instance, initargs)
             push!(getfield(instance, :slots), value)
         end
     end, initialize])
-push!(initialize.methods, mm)
+add_method(initialize, mm)
 
 # Classes
 mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
@@ -401,7 +417,7 @@ mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
         set_slot(instance, SETTERS, setters)
 
     end, initialize])
-push!(initialize.methods, mm)
+add_method(initialize, mm)
 
 new(class; initargs...) =
     let instance = allocate_instance(class)
@@ -420,9 +436,7 @@ function create_method(generic_function, specializers, procedure)
 
     multi_method = new(MultiMethod, specializers=specializers, procedure=procedure, generic_function=generic_function)
 
-    if (multi_method.specializers ∉ method_specializers.(generic_function.methods))
-        push!(generic_function.methods, multi_method)
-    end
+    add_method(generic_function, multi_method)
 end
 
 # func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
@@ -436,7 +450,7 @@ end
 
 ############################# Print ################################
 
-global print_object = new(GenericFunction, name=:print_object, args=[:obj, :io], methods=[])
+global print_object = new(GenericFunction, name=:print_object, args=[:obj, :io], methods=Dict())
 
 # Objects ----------------------------------------------------------
 create_method(print_object, [Object, Top], (obj, io) -> (print(io, "<$((class_of(obj)).name) $(string(objectid(obj), base=62))>")))
@@ -474,7 +488,7 @@ macro defgeneric(generic_function)
     generic_function_name = Expr(:quote, name)
 
     quote
-        global $name = new(GenericFunction, name=$generic_function_name, args=$arguments, methods=[])
+        global $name = new(GenericFunction, name=$generic_function_name, args=$arguments, methods=Dict())
     end
 end
 
@@ -587,11 +601,11 @@ end
 #                               TESTING                            #
 ####################################################################
 
-# @defclass(ComplexNumber, [], [real, imag])
-# c = new(ComplexNumber, real=1, imag=1)
+@defclass(ComplexNumber, [], [real, imag])
+c = new(ComplexNumber, real=1, imag=1)
 
-# @defmethod add(a::ComplexNumber, b::ComplexNumber) =
-#     new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
+@defmethod add(a::ComplexNumber, b::ComplexNumber) =
+    new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
 
 # @defclass(MoreComplexNumber, [ComplexNumber], [morereal])
 # mc = new(MoreComplexNumber, morereal=44, real=1, imag=1)
@@ -611,66 +625,66 @@ end
 
 
 # #--------------------------------------------------------------------------
-undo_trail = []
-store_previous(object, slot, value) = push!(undo_trail, (object, slot, value))
-current_state() = length(undo_trail)
-restore_state(state) =
-    while length(undo_trail) != state
-        restore(pop!(undo_trail)...)
-    end
-save_previous_value = true
-restore(object, slot, value) =
-    let previous_save_previous_value = save_previous_value
-        global save_previous_value = false
-        try
-            setproperty!(object, slot, value)
-        finally
-            global save_previous_value = previous_save_previous_value
-        end
-    end
+# undo_trail = []
+# store_previous(object, slot, value) = push!(undo_trail, (object, slot, value))
+# current_state() = length(undo_trail)
+# restore_state(state) =
+#     while length(undo_trail) != state
+#         restore(pop!(undo_trail)...)
+#     end
+# save_previous_value = true
+# restore(object, slot, value) =
+#     let previous_save_previous_value = save_previous_value
+#         global save_previous_value = false
+#         try
+#             setproperty!(object, slot, value)
+#         finally
+#             global save_previous_value = previous_save_previous_value
+#         end
+#     end
 
-@defclass(UndoableClass, [Class], [])
+# @defclass(UndoableClass, [Class], [])
 
-@defmethod compute_getter_and_setter(class::UndoableClass, slot, idx) =
-    let (getter, setter) = call_next_method()
-        (getter,
-            (o, v) -> begin
-                if save_previous_value
-                    store_previous(o, slot, getter(o))
-                end
-                setter(o, v)
-            end)
-    end
+# @defmethod compute_getter_and_setter(class::UndoableClass, slot, idx) =
+#     let (getter, setter) = call_next_method()
+#         (getter,
+#             (o, v) -> begin
+#                 if save_previous_value
+#                     store_previous(o, slot, getter(o))
+#                 end
+#                 setter(o, v)
+#             end)
+#     end
 
-@defclass(Person, [],
-    [name, age, friend],
-    metaclass = UndoableClass)
-@defmethod print_object(p::Person, io) =
-    print(io, "[$(p.name), $(p.age)$(ismissing(p.friend) ? "" : " with friend $(p.friend)")]")
+# @defclass(Person, [],
+#     [name, age, friend],
+#     metaclass = UndoableClass)
+# @defmethod print_object(p::Person, io) =
+#     print(io, "[$(p.name), $(p.age)$(ismissing(p.friend) ? "" : " with friend $(p.friend)")]")
 
-p0 = new(Person, name="John", age=21)
-p1 = new(Person, name="Paul", age=23)
-#Paul has a friend named John
-p1.friend = p0
-println(p1) #[Paul,23 with friend [John,21]]
-state0 = current_state()
-#32 years later, John changed his name to 'Louis' and got a friend
-p0.age = 53
-p1.age = 55
-p0.name = "Louis"
-p0.friend = new(Person, name="Mary", age=19)
-println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
-state1 = current_state()
-#15 years later, John (hum, I mean 'Louis') died
-p1.age = 70
-p1.friend = missing
-println(p1) #[Paul,70]
-#Let's go back in time
-restore_state(state1)
-println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
-#and even earlier
-restore_state(state0)
-println(p1) #[Paul,23 with friend [John,21]]
+# p0 = new(Person, name="John", age=21)
+# p1 = new(Person, name="Paul", age=23)
+# #Paul has a friend named John
+# p1.friend = p0
+# println(p1) #[Paul,23 with friend [John,21]]
+# state0 = current_state()
+# #32 years later, John changed his name to 'Louis' and got a friend
+# p0.age = 53
+# p1.age = 55
+# p0.name = "Louis"
+# p0.friend = new(Person, name="Mary", age=19)
+# println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
+# state1 = current_state()
+# #15 years later, John (hum, I mean 'Louis') died
+# p1.age = 70
+# p1.friend = missing
+# println(p1) #[Paul,70]
+# #Let's go back in time
+# restore_state(state1)
+# println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
+# #and even earlier
+# restore_state(state0)
+# println(p1) #[Paul,23 with friend [John,21]]
 
 # #--------------------------------------------------------------------------
 # @defclass(AvoidCollisionsClass, [Class], [])
