@@ -476,6 +476,8 @@ macro defclass(class, superclasses, direct_slots, metaclass_expr=missing)
     class_name = Expr(:quote, class)
     direct_superclasses = superclasses.args
 
+    dump(direct_slots)
+
     metaclass = :Class
     if (typeof(metaclass_expr) == Expr && metaclass_expr.args[1] == METACLASS)
         metaclass = metaclass_expr.args[2]
@@ -516,7 +518,11 @@ macro defclass(class, superclasses, direct_slots, metaclass_expr=missing)
                     push!(method_definitions, writer_method)
                 end
             end
+        elseif (typeof(slot_def) == Expr && slot_def.head == :(=))
+            initform = slot_name.args[2]
+            slot_name = slot_name.args[1]
         end
+        
 
         push!(direct_slot_names, slot_name)
         push!(direct_slot_initforms, initform)
@@ -639,7 +645,7 @@ println(p1) #[Paul,23 with friend [John,21]]
 
 #--------------------------------------------------------------------------
 
-@defclass(CountingClass, [Class], [[counter = 0]])
+@defclass(CountingClass, [Class], [counter = 0])
 
 @defmethod allocate_instance(class::CountingClass) = begin
     class.counter += 1
@@ -652,7 +658,7 @@ end
 #     [UndoableClass, CountingClass],
 #     [])
 
-# @defclass(UCPerson, [],
+# @defclass(UCerson, [],
 #     [name, age, friend],
 #     metaclass = UndoableCountingClass)
 
@@ -718,9 +724,9 @@ Person.counter
 #     call_next_method()
 # end
 
-# @defclass(CountablePerson, [], [age], metaclass = CountingClass)
+#@defclass(CountablePerson, [], [age], metaclass = CountingClass)
 
-# cp = new(CountablePerson, age=1)
+#cp = new(CountablePerson, age=1)
 
 # show("end")
 
