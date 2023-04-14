@@ -218,7 +218,7 @@ function _bootstrap_class_getters_and_setters(class::Instance, slot_names)
 
     for i in eachindex(slot_names)
         class_slots[CLASS_GETTERS_IDX][slot_names[i]] = (inst) -> (getfield(inst, :slots)[i])
-        class_slots[CLASS_SETTERS_IDX][slot_names[i]] = (inst, v) -> (println("Setter $(slot_names[i]) ; idx: $i"); println("getfield(inst, :slots)[$i] = $v)"); getfield(inst, :slots)[i] = v)
+        class_slots[CLASS_SETTERS_IDX][slot_names[i]] = (inst, v) -> (getfield(inst, :slots)[i] = v)
     end
 end
 
@@ -226,12 +226,10 @@ end
 _bootstrap_class_getters_and_setters(Class, CLASS_SLOTS)
 
 # GenericFunctions
-generic_functions_slots_names = vcat(GENERIC_FUNCTION_SLOTS, CLASS_SLOTS)
-_bootstrap_class_getters_and_setters(GenericFunction, generic_functions_slots_names)
+_bootstrap_class_getters_and_setters(GenericFunction, GENERIC_FUNCTION_SLOTS)
 
 # MultiMethods
-multi_method_slots_names = vcat(MULTI_METHOD_SLOTS, CLASS_SLOTS)
-_bootstrap_class_getters_and_setters(MultiMethod, multi_method_slots_names)
+_bootstrap_class_getters_and_setters(MultiMethod, MULTI_METHOD_SLOTS)
 
 ####################################################################
 
@@ -337,6 +335,16 @@ push!(allocate_instance.methods, mm)
 mm = Instance(MultiMethod, [[Class], (cls) -> (Instance(cls)), allocate_instance])
 push!(allocate_instance.methods, mm)
 
+# COMPUTE GETTERS AND SETTERS -------------------------------------------------------
+compute_getter_and_setter = Instance(GenericFunction, [:compute_getter_and_setter, [:class, :slot, :idx], []])
+# Class 
+mm = Instance(MultiMethod, [[Class, Top, Top], function (class, slot, idx)
+        getter = (inst) -> (getfield(inst, :slots)[idx])
+        setter = (inst, v) -> (getfield(inst, :slots)[idx] = v)
+        return (getter, setter)
+    end, compute_getter_and_setter])
+push!(compute_getter_and_setter.methods, mm)
+
 # INITIALIZE -------------------------------------------------------
 initialize = Instance(GenericFunction, [:initialize, [:instance, :initargs], []])
 # Objects 
@@ -351,8 +359,9 @@ push!(initialize.methods, mm)
 
 # Classes
 mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
-        slots, initforms = get_direct_slots_and_initforms(getfield(instance, :class))
-        for (slot_name, initform) in zip(slots, initforms)
+        # Direct class slots
+        direct_slots, initforms = get_direct_slots_and_initforms(getfield(instance, :class))
+        for (slot_name, initform) in zip(direct_slots, initforms)
             value = get(initargs, slot_name, initform)
             if (slot_name == DIRECT_SUPERCLASSES)
                 if (value === missing)
@@ -365,14 +374,31 @@ mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
             push!(getfield(instance, :slots), value)
         end
 
+        # CPL
         cpl = compute_cpl(instance)
         setproperty!(instance, CLASS_CPL, cpl)
 
-        #slots, initforms = get_indirect_slots_and_initforms(getfield(instance, :class))
-        #for (slot_name, initform) in zip(slots, initforms)
+        # Indirect class slots
+        # indirect_slots, initforms = get_indirect_slots_and_initforms(getfield(instance, :class))
+        # for (slot_name, initform) in zip(indirect_slots, initforms)
         #    value = get(initargs, slot_name, initform)
         #    push!(getfield(instance, :slots), value)
-        #end
+        # end
+
+        # Getters and setters
+        instance_direct_slots = get_direct_slots(instance)
+        instance_indirect_slots = get_indirect_slots(instance)
+
+        all_slots = vcat(instance_direct_slots, instance_indirect_slots)
+        getters, setters = (Dict(), Dict())
+        for i in eachindex(all_slots)
+            getter, setter = compute_getter_and_setter(instance, all_slots[i], i)
+            getters[all_slots[i]] =  getter
+            setters[all_slots[i]] =  setter
+        end
+        set_slot(instance, GETTERS, getters)
+        set_slot(instance, SETTERS, setters)
+
     end, initialize])
 push!(initialize.methods, mm)
 
@@ -560,6 +586,8 @@ end
 #                               TESTING                            #
 ####################################################################
 
+@defclass(ComplexNumber, [], [real, imag])
+c = new(ComplexNumber, real=1, imag=1)
 
 
 

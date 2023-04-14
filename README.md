@@ -8,3 +8,4 @@ Julia Object System
 
 ### TODO
 - classes are instances of the metaclass BuiltInClass
+- Getters and setters should only have redefinitions of CPL DirectSuperclasses 
