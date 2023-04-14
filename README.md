@@ -9,7 +9,3 @@ Julia Object System
 - if we do method combination initialize can use call_next_method and OBJECT init be :before
 
 ### TODO
-- classes are instances of the metaclass BuiltInClass
-- Initforms
-- Methods -> dictionary
-- GenericFunctions e Methods directSlots as CONSTS

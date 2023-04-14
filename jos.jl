@@ -476,8 +476,6 @@ macro defclass(class, superclasses, direct_slots, metaclass_expr=missing)
     class_name = Expr(:quote, class)
     direct_superclasses = superclasses.args
 
-    dump(direct_slots)
-
     metaclass = :Class
     if (typeof(metaclass_expr) == Expr && metaclass_expr.args[1] == METACLASS)
         metaclass = metaclass_expr.args[2]
@@ -538,12 +536,12 @@ macro defclass(class, superclasses, direct_slots, metaclass_expr=missing)
     end
 end
 
-
+@defclass(BuiltInClass, [Class], [])
 macro defbuiltinclass(type)
     !@isdefined(type) && error("Builtin Julia type [$type] does not exist.")
     class_name = Symbol("_$type")
     esc(quote
-        @defclass($class_name, [Top], [])
+        @defclass($class_name, [Top], [], metaclass=BuiltInClass)
         function class_of(i::$type)
             return $class_name
         end
@@ -553,7 +551,6 @@ end
 ### Bootstrapping Builtin
 @defbuiltinclass(Int64)
 @defbuiltinclass(String)
-
 
 ####################################################################
 #                               TESTING                            #
@@ -706,6 +703,15 @@ println(p1) #[Paul,23 with friend [John,21]]
 
 Person.counter
 
+
+class_of(1)
+class_of("Foo")
+
+@defmethod add(a::_Int64, b::_Int64) = a + b
+@defmethod add(a::_String, b::_String) = a * b
+
+add(1, 3)
+add("Foo", "Bar")
 #--------------------------------------------------------------------------
 
 # @defclass(ComplexNumber, [], [real, imag])
