@@ -297,6 +297,7 @@ function call_next_method()
         (length(method_stack.methods) == 0) && no_applicable_method(method_stack.generic_function, method_stack.args)
 
         next_method = popfirst!(method_stack.methods)
+        # println("Calling method = $(next_method.generic_function.name)($(map((x)->x.name, next_method.specializers)))")
         next_method.procedure(method_stack.args...)
     end
 end
@@ -359,8 +360,8 @@ push!(initialize.methods, mm)
 
 # Classes
 mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
-        # Direct class slots
-        direct_slots, initforms = get_direct_slots_and_initforms(getfield(instance, :class))
+        # All class slots
+        direct_slots, initforms = get_all_slots_and_initforms(getfield(instance, :class))
         for (slot_name, initform) in zip(direct_slots, initforms)
             value = get(initargs, slot_name, initform)
             if (slot_name == DIRECT_SUPERCLASSES)
@@ -378,7 +379,7 @@ mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
         cpl = compute_cpl(instance)
         setproperty!(instance, CLASS_CPL, cpl)
 
-        # Indirect class slots
+        # # Indirect class slots
         # indirect_slots, initforms = get_indirect_slots_and_initforms(getfield(instance, :class))
         # for (slot_name, initform) in zip(indirect_slots, initforms)
         #    value = get(initargs, slot_name, initform)
@@ -393,8 +394,8 @@ mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
         getters, setters = (Dict(), Dict())
         for i in eachindex(all_slots)
             getter, setter = compute_getter_and_setter(instance, all_slots[i], i)
-            getters[all_slots[i]] =  getter
-            setters[all_slots[i]] =  setter
+            getters[all_slots[i]] = getter
+            setters[all_slots[i]] = setter
         end
         set_slot(instance, GETTERS, getters)
         set_slot(instance, SETTERS, setters)
@@ -478,14 +479,11 @@ macro defgeneric(generic_function)
 end
 
 macro defmethod(method)
-    # index 1 method name arguments and argument arg_types
-    # index 2 procedure
-    # create_method(get_device_color, [ColoredPrinter], (cp)->(cp.ink))
     name = method.args[1].args[1]
     generic_function_name = Expr(:quote, name)
 
     prototype = method.args[1]
-    body = method.args[2].args[2]
+    body = method.args[2]
 
     arguments = []
     specializers = []
@@ -504,9 +502,7 @@ macro defmethod(method)
         if (!@isdefined $name)
             global $name = new(GenericFunction, name=$generic_function_name, args=$arguments, methods=[])
         end
-        create_method($name, [$(specializers...),], function ($(arguments...),)
-            $(body)
-        end)
+        create_method($name, [$(specializers...),], ($(arguments...),) -> $body)
     end
 end
 
@@ -582,67 +578,112 @@ macro defbuiltinclass(type)
     end)
 end
 
+### Bootstrapping Builtin
+@defbuiltinclass(Int64)
+@defbuiltinclass(String)
+
+
 ####################################################################
 #                               TESTING                            #
 ####################################################################
 
-@defclass(ComplexNumber, [], [real, imag])
-c = new(ComplexNumber, real=1, imag=1)
+# @defclass(ComplexNumber, [], [real, imag])
+# c = new(ComplexNumber, real=1, imag=1)
 
+# @defmethod add(a::ComplexNumber, b::ComplexNumber) =
+#     new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
 
+# @defclass(MoreComplexNumber, [ComplexNumber], [morereal])
+# mc = new(MoreComplexNumber, morereal=44, real=1, imag=1)
 
-# Shape = new(Class, name=:Shape, direct_slots=[])
-# Device = new(Class, name=:Device, direct_superclasses=[Object], direct_slots=[])
-# Line = new(Class, name=:Line, direct_superclasses=[Shape, Object], direct_slots=[:from, :to])
-# Circle = new(Class, name=:Circle, direct_superclasses=[Shape, Object], direct_slots=[:center, :radius])
-# Screen = new(Class, name=:Screen, direct_superclasses=[Device, Object], direct_slots=[])
-# Printer = new(Class, name=:Printer, direct_superclasses=[Device, Object], direct_slots=[])
-# ColoredPrinter = new(Class, name=:ColoredPrinter, direct_superclasses=[Printer, Object], direct_slots=[:ink])
-# ColorMixin = new(Class, name=:ColorMixin, direct_superclasses=[Object], direct_slots=[:color])
-# ColoredLine = new(Class, name=:ColoredLine, direct_superclasses=[ColorMixin, Line, Object], direct_slots=[])
-# ColoredCircle = new(Class, name=:ColoredCircle, direct_superclasses=[ColorMixin, Circle, Object], direct_slots=[])
+# @defclass(CountingClass, [Class], [[counter = 0]])
 
-# @defgeneric get_device_color(cp)
-# create_method(get_device_color, [ColoredPrinter], (cp) -> (cp.ink))
-
-# _set_device_color! = new(GenericFunction, name=:_set_device_color!, args=[:cp, :c], methods=[])
-# set_device_color! = new(GenericFunction, name=:set_device_color!, args=[:cp, :c], methods=[])
-# create_method(_set_device_color!, [ColoredPrinter, Top], (cp, c) -> (cp.ink = c))
-# create_method(set_device_color!, [ColoredPrinter, Top], (cp, c) -> (println("Changing printer ink color to $c"); _set_device_color!(cp, c)))
-
-# draw = new(GenericFunction, name=:draw, args=[:shape, :device], methods=[])
-# create_method(draw, [Line, Screen], (l, s) -> println("Drawing a Line on Screen"))
-# create_method(draw, [Circle, Screen], (c, s) -> println("Drawing a Circle on Screen"))
-# create_method(draw, [Line, Printer], (l, p) -> println("Drawing a Line on Printer"))
-# create_method(draw, [Circle, Printer], (c, p) -> println("Drawing a Circle on Printer"))
-# create_method(draw, [ColorMixin, Device], function (cm, d)
-#     previous_color = get_device_color(d)
-#     set_device_color!(d, cm.color)
+# @defmethod allocate_instance(class::CountingClass) = begin
+#     class.counter += 1
 #     call_next_method()
-#     set_device_color!(d, previous_color)
-# end)
-
-# show(draw.methods)
-
-# let devices = [new(Screen), new(Printer)],
-#     shapes = [new(Line), new(Circle)]
-
-#     for device in devices
-#         for shape in shapes
-#             draw(shape, device)
-#         end
-#     end
 # end
 
-# let shapes = [new(Line), new(ColoredCircle, color=:red), new(ColoredLine, color=:blue)],
-#     printer = new(ColoredPrinter, ink=:black)
+# @defclass(CountablePerson, [], [age], metaclass = CountingClass)
 
-#     for shape in shapes
-#         draw(shape, printer)
-#     end
-# end
+# cp = new(CountablePerson, age=1)
+
+# show("end")
+
 
 # #--------------------------------------------------------------------------
+undo_trail = []
+store_previous(object, slot, value) = push!(undo_trail, (object, slot, value))
+current_state() = length(undo_trail)
+restore_state(state) =
+    while length(undo_trail) != state
+        restore(pop!(undo_trail)...)
+    end
+save_previous_value = true
+restore(object, slot, value) =
+    let previous_save_previous_value = save_previous_value
+        global save_previous_value = false
+        try
+            setproperty!(object, slot, value)
+        finally
+            global save_previous_value = previous_save_previous_value
+        end
+    end
+
+@defclass(UndoableClass, [Class], [])
+
+@defmethod compute_getter_and_setter(class::UndoableClass, slot, idx) =
+    let (getter, setter) = call_next_method()
+        (getter,
+            (o, v) -> begin
+                if save_previous_value
+                    store_previous(o, slot, getter(o))
+                end
+                setter(o, v)
+            end)
+    end
+
+@defclass(Person, [],
+    [name, age, friend],
+    metaclass = UndoableClass)
+@defmethod print_object(p::Person, io) =
+    print(io, "[$(p.name), $(p.age)$(ismissing(p.friend) ? "" : " with friend $(p.friend)")]")
+
+p0 = new(Person, name="John", age=21)
+p1 = new(Person, name="Paul", age=23)
+#Paul has a friend named John
+p1.friend = p0
+println(p1) #[Paul,23 with friend [John,21]]
+state0 = current_state()
+#32 years later, John changed his name to 'Louis' and got a friend
+p0.age = 53
+p1.age = 55
+p0.name = "Louis"
+p0.friend = new(Person, name="Mary", age=19)
+println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
+state1 = current_state()
+#15 years later, John (hum, I mean 'Louis') died
+p1.age = 70
+p1.friend = missing
+println(p1) #[Paul,70]
+#Let's go back in time
+restore_state(state1)
+println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
+#and even earlier
+restore_state(state0)
+println(p1) #[Paul,23 with friend [John,21]]
+
+# #--------------------------------------------------------------------------
+# @defclass(AvoidCollisionsClass, [Class], [])
+# @defmethod compute_slots(class::AvoidCollisionsClass) =
+#     let slots = call_next_method(),
+#         duplicates = symdiff(slots, unique(slots))
+
+#         isempty(duplicates) ?
+#         slots :
+#         error("Multiple occurrences of slots: $(join(map(string, duplicates), ", "))")
+#     end
+# #--------------------------------------------------------------------------
+
 
 # @defclass(Person, [], [[name, reader = get_name, writer = set_name!],
 #     [age, reader = get_age, writer = set_age!, initform = 2],
@@ -685,7 +726,28 @@ c = new(ComplexNumber, real=1, imag=1)
 # #                       Expected Result                            #
 # ####################################################################
 
+# @defclass(Shape, [], [])
+# @defclass(Device, [], [])
+# @defgeneric draw(shape, device)
+# @defclass(Line, [Shape], [from, to])
+# @defclass(Circle, [Shape], [center, radius])
+# @defclass(Screen, [Device], [])
+# @defclass(Printer, [Device], [])
+# @defmethod draw(shape::Line, device::Screen) = println("Drawing a Line on Screen")
+# @defmethod draw(shape::Circle, device::Screen) = println("Drawing a Circle on Screen")
+# @defmethod draw(shape::Line, device::Printer) = println("Drawing a Line on Printer")
+# @defmethod draw(shape::Circle, device::Printer) = println("Drawing a Circle on Printer")
+# let devices = [new(Screen), new(Printer)],
+#     shapes = [new(Line), new(Circle)]
+
+#     for device in devices
+#         for shape in shapes
+#             draw(shape, device)
+#         end
+#     end
+# end
+
 # #Drawing a Line on Screen
 # #Drawing a Circle on Screen
 # #Drawing a Line on Printer
-# #Drawing a Circle on Printer
+# #Drawing a Circle on Printer 
