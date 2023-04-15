@@ -213,25 +213,6 @@ _bootstrap_class_getters_and_setters(GenericFunction, GENERIC_FUNCTION_SLOTS)
 # MultiMethods
 _bootstrap_class_getters_and_setters(MultiMethod, MULTI_METHOD_SLOTS)
 
-####################################################################
-
-function compute_cpl(class::Instance)
-    cpl = []
-    queue = [class]
-
-    while !isempty(queue)
-        value = popfirst!(queue)
-        if (value ∉ cpl)
-            push!(cpl, value)
-            for superclass in value.direct_superclasses
-                push!(queue, superclass)
-            end
-        end
-    end
-
-    cpl
-
-end
 
 ####################################################################
 #                             METHODS                              #
@@ -326,6 +307,29 @@ mm = Instance(MultiMethod, [[Class, Top, Top], function (class, slot, idx)
         return (getter, setter)
     end, compute_getter_and_setter])
 add_method(compute_getter_and_setter, mm)
+
+
+#CPL ---------------------------------------------------------------------------------
+
+compute_cpl = Instance(GenericFunction, [:compute_cpl, [:class], Dict()])
+# Class 
+mm = Instance(MultiMethod, [[Class], function (class)
+                                        cpl = []
+                                        queue = [class]
+
+                                        while !isempty(queue)
+                                            value = popfirst!(queue)
+                                            if (value ∉ cpl)
+                                                push!(cpl, value)
+                                                for superclass in value.direct_superclasses
+                                                    push!(queue, superclass)
+                                                end
+                                            end
+                                        end
+
+                                        cpl
+end, compute_cpl])
+add_method(compute_cpl, mm)
 
 # COMPUTE Slots -------------------------------------------------------
 compute_slots = Instance(GenericFunction, [:compute_slots, [:class], Dict()])
@@ -556,253 +560,56 @@ end
 #                               TESTING                            #
 ####################################################################
 
+@defclass(DylanClass, [Class], [])
 
-@defmethod compute_slots(class::Class) =
-    vcat(map(class_direct_slots, class_cpl(class))...)
+@defmethod compute_cpl_bfs(class::Class) = begin
+    cpl = []
+    queue = [class]
 
-
-@defclass(Foo, [], [[a = 1], [b = 2]])
-@defclass(Bar, [], [[b = 3], [c = 4]])
-@defclass(FooBar, [Foo, Bar], [[a = 5], [d = 6]])
-@defclass(AvoidCollisionsClass, [Class], [])
-
-@defmethod compute_slots(class::AvoidCollisionsClass) =
-    let slots = call_next_method(),
-        duplicates = symdiff(slots, unique(slots))
-
-        isempty(duplicates) ?
-        slots :
-        error("Multiple occurrences of slots: $(join(map(string, duplicates), ", "))")
+    while !isempty(queue)
+        value = popfirst!(queue)
+        if (value ∉ cpl)
+            push!(cpl, value)
+            for superclass in value.direct_superclasses
+                push!(queue, superclass)
+            end
+        end
     end
+    
+    cpl
+end
 
-# @defclass(FooBar2, [Foo, Bar], [[a = 5], [d = 6]], metaclass = AvoidCollisionsClass)
 
-#--------------------------------------------------------------------------
+@defmethod topological_cpl_util(visited, stack, vertex) = begin
+    visited[vertex.name] = true
 
-undo_trail = []
-store_previous(object, slot, value) = push!(undo_trail, (object, slot, value))
-current_state() = length(undo_trail)
-restore_state(state) =
-    while length(undo_trail) != state
-        restore(pop!(undo_trail)...)
-    end
-save_previous_value = true
-restore(object, slot, value) =
-    let previous_save_previous_value = save_previous_value
-        global save_previous_value = false
-        try
-            setproperty!(object, slot, value)
-        finally
-            global save_previous_value = previous_save_previous_value
+    for adj_vertex in vertex.direct_superclasses
+        if (!haskey(visited, vertex.name))
+            topological_cpl_util(visited, stack, adj_vertex)
         end
     end
 
-@defclass(UndoableClass, [Class], [])
-
-@defmethod compute_getter_and_setter(class::UndoableClass, slot, idx) =
-    let (getter, setter) = call_next_method()
-        (getter,
-            (o, v) -> begin
-                if save_previous_value
-                    store_previous(o, slot, getter(o))
-                end
-                setter(o, v)
-            end)
-    end
-
-@defclass(Person, [],
-    [name, age, friend],
-    metaclass = UndoableClass)
-@defmethod print_object(p::Person, io) =
-    print(io, "[$(p.name), $(p.age)$(ismissing(p.friend) ? "" : " with friend $(p.friend)")]")
-
-p0 = new(Person, name="John", age=21)
-p1 = new(Person, name="Paul", age=23)
-#Paul has a friend named John
-p1.friend = p0
-println(p1) #[Paul,23 with friend [John,21]]
-state0 = current_state()
-#32 years later, John changed his name to 'Louis' and got a friend
-p0.age = 53
-p1.age = 55
-p0.name = "Louis"
-p0.friend = new(Person, name="Mary", age=19)
-println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
-state1 = current_state()
-#15 years later, John (hum, I mean 'Louis') died
-p1.age = 70
-p1.friend = missing
-println(p1) #[Paul,70]
-#Let's go back in time
-restore_state(state1)
-println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
-#and even earlier
-restore_state(state0)
-println(p1) #[Paul,23 with friend [John,21]]
-
-#--------------------------------------------------------------------------
-
-@defclass(CountingClass, [Class], [counter = 0])
-
-@defmethod allocate_instance(class::CountingClass) = begin
-    class.counter += 1
-    call_next_method()
+    push!(stack, vertex)
 end
 
-#--------------------------------------------------------------------------
+@defmethod compute_cpl(class::DylanClass) = begin
+    visited = Dict{Symbol, Bool}()
+    stack = []
 
-# @defclass(UndoableCountingClass,
-#     [UndoableClass, CountingClass],
-#     [])
+    vertices = compute_cpl_bfs(class)
 
-# @defclass(UCerson, [],
-#     [name, age, friend],
-#     metaclass = UndoableCountingClass)
+    for vertex in vertices
+        if (!haskey(visited, vertex.name))
+            topological_cpl_util(visited, stack, vertex)
+        end
+    end
 
-# p0 = new(UCPerson, name="John", age=21)
+    stack
+end
 
-#--------------------------------------------------------------------------
-
-
-@defclass(UndoableCollisionAvoidingCountingClass,
-    [UndoableClass, AvoidCollisionsClass, CountingClass],
-    [])
-@defclass(NamedThing, [], [name])
-# @defclass(Person, [NamedThing],
-#     [name, age, friend],
-#     metaclass = UndoableCollisionAvoidingCountingClass)
-@defclass(Person, [NamedThing],
-    [age, friend],
-    metaclass = UndoableCollisionAvoidingCountingClass)
-@defmethod print_object(p::Person, io) =
-    print(io, "[$(p.name), $(p.age)$(ismissing(p.friend) ? "" : " with friend $(p.friend)")]")
-
-p0 = new(Person, name="John", age=21)
-p1 = new(Person, name="Paul", age=23)
-#Paul has a friend named John
-p1.friend = p0
-println(p1) #[Paul,23 with friend [John,21]]
-state0 = current_state()
-#32 years later, John changed his name to 'Louis' and got a friend
-p0.age = 53
-p1.age = 55
-p0.name = "Louis"
-p0.friend = new(Person, name="Mary", age=19)
-println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
-state1 = current_state()
-#15 years later, John (hum, I mean 'Louis') died
-p1.age = 70
-p1.friend = missing
-println(p1) #[Paul,70]
-#Let's go back in time
-restore_state(state1)
-println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
-#and even earlier
-restore_state(state0)
-println(p1) #[Paul,23 with friend [John,21]]
-
-Person.counter
-
-
-class_of(1)
-class_of("Foo")
-
-@defmethod add(a::_Int64, b::_Int64) = a + b
-@defmethod add(a::_String, b::_String) = a * b
-
-add(1, 3)
-add("Foo", "Bar")
-#--------------------------------------------------------------------------
-
-# @defclass(ComplexNumber, [], [real, imag])
-# c = new(ComplexNumber, real=1, imag=1)
-
-# @defmethod add(a::ComplexNumber, b::ComplexNumber) =
-#     new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
-
-# @defclass(MoreComplexNumber, [ComplexNumber], [morereal])
-# mc = new(MoreComplexNumber, morereal=44, real=1, imag=1)
-
-# @defclass(CountingClass, [Class], [[counter = 0]])
-
-# @defmethod allocate_instance(class::CountingClass) = begin
-#     class.counter += 1
-#     call_next_method()
-# end
-
-#@defclass(CountablePerson, [], [age], metaclass = CountingClass)
-
-#cp = new(CountablePerson, age=1)
-
-# show("end")
-
-
-# #--------------------------------------------------------------------------
-
-
-# @defclass(Person, [], [[name, reader = get_name, writer = set_name!],
-#     [age, reader = get_age, writer = set_age!, initform = 2],
-#     [friend = "Jorge", reader = get_friend, writer = set_friend!]])
-
-
-# p = new(Person, name='a')
-# display(p.slots)
-
-# @defgeneric add(a, b)
-# @defmethod add(a::ComplexNumber, b::ComplexNumber) =
-#     new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
-
-# show(add.methods)
-# c1 = new(ComplexNumber, real=1, imag=2)
-# c2 = new(ComplexNumber, real=1, imag=2)
-# add(c1, c2)
-
-# #--------------------------------------------------------------------------
-
-# @macroexpand @defbuiltinclass(Int64)
-# @defbuiltinclass(Int64)
-# @defbuiltinclass(String)
-
-
-# class_of(1)
-# class_of("Dragon")
-
-
-# #--------------------------------------------------------------------------
-
-# @macroexpand @defclass(MoreComplexNumber, [ComplexNumber], [superreal])
-# @defclass(MoreComplexNumber, [ComplexNumber], [superreal])
-# @defclass(MoreComplexNumber2, [MoreComplexNumber, ComplexNumber], [superreal])
-
-# class_direct_slots(MoreComplexNumber2)
-
-
-# ####################################################################
-# #                       Expected Result                            #
-# ####################################################################
-
-# @defclass(Shape, [], [])
-# @defclass(Device, [], [])
-# @defgeneric draw(shape, device)
-# @defclass(Line, [Shape], [from, to])
-# @defclass(Circle, [Shape], [center, radius])
-# @defclass(Screen, [Device], [])
-# @defclass(Printer, [Device], [])
-# @defmethod draw(shape::Line, device::Screen) = println("Drawing a Line on Screen")
-# @defmethod draw(shape::Circle, device::Screen) = println("Drawing a Circle on Screen")
-# @defmethod draw(shape::Line, device::Printer) = println("Drawing a Line on Printer")
-# @defmethod draw(shape::Circle, device::Printer) = println("Drawing a Circle on Printer")
-# let devices = [new(Screen), new(Printer)],
-#     shapes = [new(Line), new(Circle)]
-
-#     for device in devices
-#         for shape in shapes
-#             draw(shape, device)
-#         end
-#     end
-# end
-
-# #Drawing a Line on Screen
-# #Drawing a Circle on Screen
-# #Drawing a Line on Printer
-# #Drawing a Circle on Printer 
+@defclass(A, [], [], metaclass=DylanClass)
+@defclass(B, [], [], metaclass=DylanClass)
+@defclass(C, [], [], metaclass=DylanClass)
+@defclass(D, [A, B], [], metaclass=DylanClass)
+@defclass(E, [A, C], [], metaclass=DylanClass)
+@defclass(F, [D, E], [], metaclass=DylanClass)
