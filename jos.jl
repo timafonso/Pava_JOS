@@ -350,15 +350,12 @@ add_method(initialize, mm)
 # Classes
 mm = Instance(MultiMethod, [[Class, Top], function (instance, initargs)
         # All class slots
-        direct_slots, initforms = get_all_slots_and_initforms(getfield(instance, :class))
-        for (slot_name, initform) in zip(direct_slots, initforms)
-            value = get(initargs, slot_name, initform)
-            if (slot_name == DIRECT_SUPERCLASSES &&
-                (value === missing || value == []))
-                value = [Object]
-            end
+        call_next_method()
 
-            push!(getfield(instance, :slots), value)
+        # Superclasses, force Object
+        direct_superclasses = getproperty(instance, DIRECT_SUPERCLASSES)
+        if (direct_superclasses === missing || direct_superclasses == [])
+            setproperty!(instance, DIRECT_SUPERCLASSES, [Object])
         end
 
         # CPL
@@ -520,7 +517,7 @@ macro defclass(class, superclasses, direct_slots, metaclass_expr=missing)
             initform = slot_name.args[2]
             slot_name = slot_name.args[1]
         end
-        
+
 
         push!(direct_slot_names, slot_name)
         push!(direct_slot_initforms, initform)
@@ -541,7 +538,7 @@ macro defbuiltinclass(type)
     !@isdefined(type) && error("Builtin Julia type [$type] does not exist.")
     class_name = Symbol("_$type")
     esc(quote
-        @defclass($class_name, [Top], [], metaclass=BuiltInClass)
+        @defclass($class_name, [Top], [], metaclass = BuiltInClass)
         function class_of(i::$type)
             return $class_name
         end
