@@ -88,7 +88,7 @@ push!(Object.slots, Dict{Symbol,Any}())     # setters
 #-------------- Generic Functions and Methods -----------------------
 GenericFunction = Instance(Class, [GENERIC_FUNCTION_SLOTS, :GenericFunction, [Object]])
 push!(GenericFunction.slots, [GenericFunction, Object, Top]) #cpl
-push!(GenericFunction.slots, [missing, [], Dict{Tuple,Any}(), Dict{Tuple,Vector}()]) #initforms
+push!(GenericFunction.slots, [missing, missing, missing, missing]) #initforms
 push!(GenericFunction.slots, Dict{Symbol,Any}())                  # getters
 push!(GenericFunction.slots, Dict{Symbol,Any}())                  # setters
 
@@ -454,7 +454,7 @@ macro defgeneric(generic_function)
 
     generic_function_name = Expr(:quote, name)
     quote
-        global $name = new(GenericFunction, name=$generic_function_name, args=$arguments)
+        global $name = new(GenericFunction, $GENERIC_FUNCTION_NAME=$generic_function_name, $GENERIC_FUNCTION_ARGS=$arguments, $GENERIC_FUNCTION_METHODS=Dict{Tuple,Any}(), $GENERIC_FUNCTION_CACHED_EFFECTIVE_METHODS=Dict{Tuple,Vector}())
     end
 end
 
@@ -482,7 +482,7 @@ macro defmethod(qualifier, method)
 
     quote
         if (!@isdefined $name)
-            global $name = new(GenericFunction, name=$generic_function_name, args=$arguments)
+            global $name = new(GenericFunction, $GENERIC_FUNCTION_NAME=$generic_function_name, $GENERIC_FUNCTION_ARGS=$arguments, $GENERIC_FUNCTION_METHODS=Dict{Tuple,Any}(), $GENERIC_FUNCTION_CACHED_EFFECTIVE_METHODS=Dict{Tuple,Vector}())
         end
         create_method($name, [$(specializers...),], ($(arguments...),) -> $body, $qualifier)
     end
@@ -600,4 +600,65 @@ end
 
 function Base.show(io::IO, obj::Instance)
     print_object(obj, io)
+end
+
+# Dylan CPL
+@defclass(DylanClass, [Class], [])
+
+@defmethod build_graph_util(class::Class, adj_list, classes) = begin
+    if (!haskey(classes, class.name))
+        classes[class.name] = class
+    end
+    for direct_superclass in class.direct_superclasses
+        if (!haskey(adj_list, direct_superclass.name))
+            adj_list[direct_superclass.name] = [class]
+        elseif (class ∉ adj_list[direct_superclass.name])
+            push!(adj_list[direct_superclass.name], class)
+        end
+        build_graph_util(direct_superclass, adj_list, classes)
+    end
+end
+
+@defmethod build_graph(class::DylanClass) = begin
+    adj_list = Dict()
+    adj_list[class.name] = []
+
+    classes = Dict()
+    classes[class.name] = class
+
+    build_graph_util(class, adj_list, classes)
+
+    (adj_list, classes)
+end
+
+@defmethod compute_cpl(class::DylanClass) = begin
+
+    graph, classes = build_graph(class)
+
+    indegrees = Dict()
+    for (class_name, _) in classes
+        indegrees[class_name] = 0
+    end
+
+    for (class_name, adjacents) in graph
+        for neighbor in adjacents
+            indegrees[class_name] += 1
+        end
+    end
+
+    nodes_with_no_incoming_edges = [class]
+    cpl = []
+    while (length(nodes_with_no_incoming_edges) > 0)
+        node = pop!(nodes_with_no_incoming_edges)
+        push!(cpl, node)
+
+        for neighbor in node.direct_superclasses
+            indegrees[neighbor.name] -= 1
+            if indegrees[neighbor.name] == 0
+                push!(nodes_with_no_incoming_edges, neighbor)
+            end
+        end
+    end
+
+    cpl
 end
