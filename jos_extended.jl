@@ -16,7 +16,8 @@ const CLASS_SETTERS_IDX = findfirst(==(SETTERS), CLASS_SLOTS)
 const GENERIC_FUNCTION_NAME = :name
 const GENERIC_FUNCTION_ARGS = :args
 const GENERIC_FUNCTION_METHODS = :methods
-const GENERIC_FUNCTION_SLOTS = [GENERIC_FUNCTION_NAME, GENERIC_FUNCTION_ARGS, GENERIC_FUNCTION_METHODS]
+const GENERIC_FUNCTION_CACHED_EFFECTIVE_METHODS = :cached_effective_methods
+const GENERIC_FUNCTION_SLOTS = [GENERIC_FUNCTION_NAME, GENERIC_FUNCTION_ARGS, GENERIC_FUNCTION_METHODS, GENERIC_FUNCTION_CACHED_EFFECTIVE_METHODS]
 
 const MM_SPECIALIZERS = :specializers
 const MM_QUALIFIER = :qualifier
@@ -63,16 +64,16 @@ push!(Class.slots, :Class)                              # name
 push!(Class.slots, [Object])                            # superclasses
 push!(Class.slots, [Class, Object, Top])                # cpl
 push!(Class.slots, [missing for _ in CLASS_SLOTS])      # initforms
-push!(Class.slots, Dict())                                  # getters
-push!(Class.slots, Dict())                                  # setters
+push!(Class.slots, Dict{Symbol,Any}())                 # getters
+push!(Class.slots, Dict{Symbol,Any}())                 # setters
 
 push!(Top.slots, [])                    # direct slots
 push!(Top.slots, :Top)                  # name
 push!(Top.slots, [])                    # superclasses
 push!(Top.slots, [Top])                 # cpl
 push!(Top.slots, [])                    # initforms
-push!(Top.slots, Dict())                  # getters
-push!(Top.slots, Dict())                  # setters
+push!(Top.slots, Dict{Symbol,Any}())   # getters
+push!(Top.slots, Dict{Symbol,Any}())   # setters
 
 
 
@@ -80,22 +81,22 @@ push!(Object.slots, [])                 # direct slots
 push!(Object.slots, :Object)            # name
 push!(Object.slots, [Top])              # superclasses
 push!(Object.slots, [Object, Top])           # cpl
-push!(Object.slots, [])                 # initforms
-push!(Object.slots, Dict())                  # getters
-push!(Object.slots, Dict())                  # setters
+push!(Object.slots, [])                      # initforms
+push!(Object.slots, Dict{Symbol,Any}())     # getters
+push!(Object.slots, Dict{Symbol,Any}())     # setters
 
 #-------------- Generic Functions and Methods -----------------------
 GenericFunction = Instance(Class, [GENERIC_FUNCTION_SLOTS, :GenericFunction, [Object]])
 push!(GenericFunction.slots, [GenericFunction, Object, Top]) #cpl
-push!(GenericFunction.slots, [missing, missing, missing]) #initforms
-push!(GenericFunction.slots, Dict())                  # getters
-push!(GenericFunction.slots, Dict())                  # setters
+push!(GenericFunction.slots, [missing, [], Dict{Tuple,Any}(), Dict{Tuple,Vector}()]) #initforms
+push!(GenericFunction.slots, Dict{Symbol,Any}())                  # getters
+push!(GenericFunction.slots, Dict{Symbol,Any}())                  # setters
 
 MultiMethod = Instance(Class, [MM_SLOTS, :MultiMethod, [Object]])
 push!(MultiMethod.slots, [MultiMethod, Object, Top])    #cpl
-push!(MultiMethod.slots, [missing, missing, missing, missing])   #initforms
-push!(MultiMethod.slots, Dict())                    # getters
-push!(MultiMethod.slots, Dict())                    # setters
+push!(MultiMethod.slots, [missing, missing, missing])   #initforms
+push!(MultiMethod.slots, Dict{Symbol,Any}())                    # getters
+push!(MultiMethod.slots, Dict{Symbol,Any}())                    # setters
 
 
 ####################################################################
@@ -187,13 +188,6 @@ function method_specializers(instance)
     getproperty(instance, MM_SPECIALIZERS)
 end
 
-# ------------------------------------------------------------------
-function add_method(generic_function, multi_method)
-    key = (map(x -> x.name, multi_method.specializers)..., getproperty(multi_method, MM_QUALIFIER))
-    methods = generic_function.methods
-    methods[key] = multi_method
-end
-
 ####################################################################
 #                         Generic (BOOTSTRAPPING)                  #
 ####################################################################
@@ -217,29 +211,35 @@ _bootstrap_class_getters_and_setters(GenericFunction, GENERIC_FUNCTION_SLOTS)
 # MultiMethods
 _bootstrap_class_getters_and_setters(MultiMethod, MM_SLOTS)
 
-####################################################################
-
-function compute_cpl(class::Instance)
-    cpl = []
-    queue = [class]
-
-    while !isempty(queue)
-        value = popfirst!(queue)
-        if (value ∉ cpl)
-            push!(cpl, value)
-            for superclass in value.direct_superclasses
-                push!(queue, superclass)
-            end
-        end
-    end
-
-    cpl
-
-end
 
 ####################################################################
 #                             METHODS                              #
 ####################################################################
+
+compute_key(types) = (map(x -> getproperty(x, CLASS_NAME), types)...,)
+
+function add_method(generic_function, multi_method)
+    clear_cache(generic_function)
+    key = compute_key(multi_method.specializers)
+    key = (key..., getproperty(multi_method, MM_QUALIFIER))
+    methods = getproperty(generic_function, GENERIC_FUNCTION_METHODS)
+    methods[key] = multi_method
+end
+
+function add_cached_methods(generic_function, arg_types, methods)
+    key = compute_key(arg_types)
+    cache = getproperty(generic_function, GENERIC_FUNCTION_CACHED_EFFECTIVE_METHODS)
+    cache[key] = methods
+end
+
+function clear_cache(generic_function)
+    empty!(getproperty(generic_function, GENERIC_FUNCTION_CACHED_EFFECTIVE_METHODS))
+end
+
+function get_cached_method(generic_function, arg_types)
+    key = compute_key(arg_types)
+    get(getproperty(generic_function, GENERIC_FUNCTION_CACHED_EFFECTIVE_METHODS), key, missing)
+end
 
 function is_applicable_method(method, arg_types)
 
@@ -291,11 +291,23 @@ function call_effective_method(generic_f, args)
     (length(generic_f.args) == length(args)) || error("Wrong arguments for generic function.")
 
     arg_types = class_of.(args)
-    applicable_methods = get_applicable_methods(generic_f, arg_types)
 
-    (length(applicable_methods) == 0) && no_applicable_method(generic_f, args)
+    # check if cached first
+    cached_methods = get_cached_method(generic_f, arg_types)
+    if (cached_methods !== missing)
+        println("USING CACHED METHODS")
+        best_methods = cached_methods
+    else
+        println("COMPUTING METHODS")
+        # compute effective methods
+        applicable_methods = get_applicable_methods(generic_f, arg_types)
+        (length(applicable_methods) == 0) && no_applicable_method(generic_f, args)
 
-    best_methods = sort(applicable_methods, lt=(method_1, method_2) -> compare_methods(method_1, method_2, arg_types))
+        best_methods = sort(applicable_methods, lt=(method_1, method_2) -> compare_methods(method_1, method_2, arg_types))
+
+        # cache
+        add_cached_methods(generic_f, arg_types, best_methods)
+    end
 
     # before
     before_methods = filter((x) -> getproperty(x, MM_QUALIFIER) == MM_QUALIFIER_BEFORE, best_methods)
@@ -305,6 +317,7 @@ function call_effective_method(generic_f, args)
 
     # primary
     primary_methods = filter((x) -> getproperty(x, MM_QUALIFIER) == MM_QUALIFIER_PRIMARY, best_methods)
+    println("Primary methods $(show.(getproperty.(primary_methods, MM_SPECIALIZERS)))")
     applicable_method_stack_backup = applicable_method_stack
     global applicable_method_stack = MethodCallStack(primary_methods, args, generic_f)
     result = call_next_method()
@@ -327,7 +340,7 @@ end
 
 ##################### Initialize Instance ##########################
 # ALLOCATE INSTANCE ------------------------------------------------
-allocate_instance = Instance(GenericFunction, [:allocate_instance, [:arg], Dict()])
+allocate_instance = Instance(GenericFunction, [:allocate_instance, [:arg], Dict{Tuple,Any}(), Dict{Tuple,Vector}()])
 # Objects 
 mm = Instance(MultiMethod, [[Object], MM_QUALIFIER_PRIMARY, (obj) -> (Instance(obj)), allocate_instance])
 add_method(allocate_instance, mm)
@@ -335,8 +348,29 @@ add_method(allocate_instance, mm)
 mm = Instance(MultiMethod, [[Class], MM_QUALIFIER_PRIMARY, (cls) -> (Instance(cls)), allocate_instance])
 add_method(allocate_instance, mm)
 
+# COMPUTE CPL -------------------------------------------------------
+compute_cpl = Instance(GenericFunction, [:compute_cpl, [:class], Dict{Tuple,Any}(), Dict{Tuple,Vector}()])
+# Class 
+mm = Instance(MultiMethod, [[Class], function (class)
+        cpl = []
+        queue = [class]
+
+        while !isempty(queue)
+            value = popfirst!(queue)
+            if (value ∉ cpl)
+                push!(cpl, value)
+                for superclass in value.direct_superclasses
+                    push!(queue, superclass)
+                end
+            end
+        end
+
+        cpl
+    end, compute_cpl])
+add_method(compute_cpl, mm)
+
 # COMPUTE GETTERS AND SETTERS -------------------------------------------------------
-compute_getter_and_setter = Instance(GenericFunction, [:compute_getter_and_setter, [:class, :slot, :idx], Dict()])
+compute_getter_and_setter = Instance(GenericFunction, [:compute_getter_and_setter, [:class, :slot, :idx], Dict{Tuple,Any}(), Dict{Tuple,Vector}()])
 # Class 
 mm = Instance(MultiMethod, [[Class, Top, Top], MM_QUALIFIER_PRIMARY, function (class, slot, idx)
         getter = (inst) -> (getfield(inst, :slots)[idx])
@@ -346,7 +380,7 @@ mm = Instance(MultiMethod, [[Class, Top, Top], MM_QUALIFIER_PRIMARY, function (c
 add_method(compute_getter_and_setter, mm)
 
 # COMPUTE Slots -------------------------------------------------------
-compute_slots = Instance(GenericFunction, [:compute_slots, [:class], Dict()])
+compute_slots = Instance(GenericFunction, [:compute_slots, [:class], Dict{Tuple,Any}(), Dict{Tuple,Vector}()])
 # Class 
 mm = Instance(MultiMethod, [[Class], MM_QUALIFIER_PRIMARY, function (class)
         vcat(map(class_direct_slots, class_cpl(class))...)
@@ -354,7 +388,7 @@ mm = Instance(MultiMethod, [[Class], MM_QUALIFIER_PRIMARY, function (class)
 add_method(compute_slots, mm)
 
 # INITIALIZE -------------------------------------------------------
-initialize = Instance(GenericFunction, [:initialize, [:instance, :initargs], Dict()])
+initialize = Instance(GenericFunction, [:initialize, [:instance, :initargs], Dict{Tuple,Any}(), Dict{Tuple,Vector}()])
 # Objects 
 mm = Instance(MultiMethod, [[Object, Top], MM_QUALIFIER_PRIMARY, function (instance, initargs)
         slots, initforms = get_all_slots_and_initforms(getfield(instance, :class))
@@ -382,7 +416,7 @@ mm = Instance(MultiMethod, [[Class, Top], MM_QUALIFIER_PRIMARY, function (instan
 
         # Getters and setters
         all_slots = get_all_slots(instance)
-        getters, setters = (Dict(), Dict())
+        getters, setters = (Dict{Symbol,Any}(), Dict{Symbol,Any}())
         for i in eachindex(all_slots)
             getter, setter = compute_getter_and_setter(instance, all_slots[i], i)
             getters[all_slots[i]] = getter
@@ -394,14 +428,13 @@ mm = Instance(MultiMethod, [[Class, Top], MM_QUALIFIER_PRIMARY, function (instan
     end, initialize])
 add_method(initialize, mm)
 
+####################################################################
+
 new(class; initargs...) =
     let instance = allocate_instance(class)
         initialize(instance, initargs)
         instance
     end
-
-####################################################################
-
 
 ####################################################################
 #                         GENERIC FUNCTIONS                        #
@@ -414,54 +447,23 @@ function create_method(generic_function, specializers, procedure, qualifier=MM_Q
     add_method(generic_function, multi_method)
 end
 
-# func = new(GenericFunction, name=:func, args=[:a, :b], methods=[])
-
-
-####################################################################
-
-####################################################################
-#                        PRE-DEFINED METHODS                       #
-####################################################################
-
-############################# Print ################################
-
-global print_object = new(GenericFunction, name=:print_object, args=[:obj, :io], methods=Dict())
-
-# Objects ----------------------------------------------------------
-create_method(print_object, [Object, Top], (obj, io) -> (print(io, "<$((class_of(obj)).name) $(string(objectid(obj), base=62))>")))
-
-# Classes ----------------------------------------------------------
-create_method(print_object, [Class, Top], (cls, io) -> (print(io, "<$(class_of(cls).name) $(cls.name)>")))
-
-# Generic Functions ------------------------------------------------
-create_method(print_object, [GenericFunction, Top], (gf, io) -> (print(io, "<GenericFunction $(gf.name) with $(length(gf.methods)) methods>")))
-
-# Multi Methods ----------------------------------------------------
-create_method(print_object, [MultiMethod, Top], (mm, io) -> (names = getproperty.(mm.specializers, :name); print(io, "<MultiMethod $(mm.generic_function.name)($(join(names, ", ")))>")))
-
-function Base.show(io::IO, obj::Instance)
-    print_object(obj, io)
-end
-
 ####################################################################
 #                               MACROS                             #
 ####################################################################
 
 macro defgeneric(generic_function)
-
     name = generic_function.args[1]
     arguments = generic_function.args[2:end]
 
     generic_function_name = Expr(:quote, name)
-
     quote
-        global $name = new(GenericFunction, name=$generic_function_name, args=$arguments, methods=Dict())
+        global $name = new(GenericFunction, name=$generic_function_name, args=$arguments)
     end
 end
 
+
 macro defmethod(qualifier, method)
     name = method.args[1].args[1]
-    generic_function_name = Expr(:quote, name)
     qualifier = Expr(:quote, qualifier)
 
     prototype = method.args[1]
@@ -481,9 +483,8 @@ macro defmethod(qualifier, method)
     end
 
     quote
-        if (!@isdefined $name)
-            global $name = new(GenericFunction, name=$generic_function_name, args=$arguments, methods=Dict())
-        end
+        (!@isdefined $name) && @defgeneric $name($arguments...)
+
         create_method($name, [$(specializers...),], ($(arguments...),) -> $body, $qualifier)
     end
 end
@@ -575,6 +576,34 @@ end
 @defbuiltinclass(String)
 
 ####################################################################
+#                        PRE-DEFINED METHODS                       #
+####################################################################
+
+############################# Print ################################
+
+# Objects ----------------------------------------------------------
+@defmethod print_object(obj::Object, io::Top) =
+    print(io, "<$(class_name(class_of(obj))) $(string(objectid(obj), base=62))>")
+
+# Classes ----------------------------------------------------------
+@defmethod print_object(cls::Class, io::Top) =
+    print(io, "<$(class_of(cls).name) $(cls.name)>")
+
+# Generic Functions ------------------------------------------------
+@defmethod print_object(gf::GenericFunction, io::Top) =
+    print(io, "<GenericFunction $(gf.name) with $(length(gf.methods)) methods>")
+
+# Multi Methods ----------------------------------------------------
+@defmethod print_object(mm::MultiMethod, io::Top) = begin
+    names = getproperty.(mm.specializers, :name)
+    print(io, "<MultiMethod $(mm.generic_function.name)($(join(names, ", ")))>")
+end
+
+function Base.show(io::IO, obj::Instance)
+    print_object(obj, io)
+end
+
+####################################################################
 #                               TESTING                            #
 ####################################################################
 
@@ -582,9 +611,37 @@ end
 
 @defclass(Foo, [], [a = 1])
 
-@defmethod before bar(c::Foo) = display("before")
-@defmethod bar(c::Foo) = display("primary")
-@defmethod after bar(c::Foo) = display("after")
+# @defmethod before bar(c::Foo) = display("before")
+# @defmethod bar(c::Foo) = display("primary")
+# @defmethod after bar(c::Foo) = display("after")
 
-f = new(Foo)
-bar(f)
+# f = new(Foo)
+# bar(f)
+
+## Multiple dispatch
+
+# @defclass(Shape, [], [])
+# @defclass(Device, [], [])
+# @defgeneric draw(shape, device)
+# @defclass(Line, [Shape], [from, to])
+# @defclass(Circle, [Shape], [center, radius])
+# @defclass(Screen, [Device], [])
+# @defclass(Printer, [Device], [])
+# @defmethod draw(shape::Line, device::Screen) = println("Drawing a Line on Screen")
+# @defmethod draw(shape::Circle, device::Screen) = println("Drawing a Circle on Screen")
+# @defmethod draw(shape::Line, device::Printer) = println("Drawing a Line on Printer")
+# @defmethod draw(shape::Circle, device::Printer) = println("Drawing a Circle on Printer")
+# let devices = [new(Screen), new(Printer)],
+#     shapes = [new(Line), new(Circle)]
+
+#     for device in devices
+#         for shape in shapes
+#             draw(shape, device)
+#         end
+#     end
+# end
+
+# #Drawing a Line on Screen
+# #Drawing a Circle on Screen
+# #Drawing a Line on Printer
+# #Drawing a Circle on Printer 

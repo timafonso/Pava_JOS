@@ -301,26 +301,26 @@ add_method(allocate_instance, mm)
 compute_cpl = Instance(GenericFunction, [:compute_cpl, [:class], Dict()])
 # Class 
 mm = Instance(MultiMethod, [[Class], function (class)
-                                        cpl = []
-                                        queue = [class]
+        cpl = []
+        queue = [class]
 
-                                        while !isempty(queue)
-                                            value = popfirst!(queue)
-                                            if (value ∉ cpl)
-                                                push!(cpl, value)
-                                                for superclass in value.direct_superclasses
-                                                    push!(queue, superclass)
-                                                end
-                                            end
-                                        end
+        while !isempty(queue)
+            value = popfirst!(queue)
+            if (value ∉ cpl)
+                push!(cpl, value)
+                for superclass in value.direct_superclasses
+                    push!(queue, superclass)
+                end
+            end
+        end
 
-                                        cpl
-end, compute_cpl])
+        cpl
+    end, compute_cpl])
 add_method(compute_cpl, mm)
 
 # COMPUTE GETTERS AND SETTERS -------------------------------------------------------
-compute_getter_and_setter = Instance(GenericFunction, 
-                                    [:compute_getter_and_setter, [:class, :slot, :idx], Dict()])
+compute_getter_and_setter = Instance(GenericFunction,
+    [:compute_getter_and_setter, [:class, :slot, :idx], Dict()])
 # Class 
 mm = Instance(MultiMethod, [[Class, Top, Top], function (class, slot, idx)
         getter = (inst) -> (getfield(inst, :slots)[idx])
@@ -567,25 +567,8 @@ end
 
 @defclass(DylanClass, [Class], [])
 
-@defmethod compute_cpl_bfs(class::Class) = begin
-    cpl = []
-    queue = [class]
-
-    while !isempty(queue)
-        value = popfirst!(queue)
-        if (value ∉ cpl)
-            push!(cpl, value)
-            for superclass in value.direct_superclasses
-                push!(queue, superclass)
-            end
-        end
-    end
-
-    cpl
-end
-
 @defmethod build_graph_util(class::Class, adj_list, classes) = begin
-    if(!haskey(classes, class.name))
+    if (!haskey(classes, class.name))
         classes[class.name] = class
     end
     for direct_superclass in class.direct_superclasses
@@ -601,44 +584,44 @@ end
 @defmethod build_graph(class::DylanClass) = begin
     adj_list = Dict()
     adj_list[class.name] = []
-    
+
     classes = Dict()
     classes[class.name] = class
 
     build_graph_util(class, adj_list, classes)
-    
+
     (adj_list, classes)
 end
 
 @defmethod compute_cpl(class::DylanClass) = begin
 
     graph, classes = build_graph(class)
-    
+
     indegrees = Dict()
     for (class_name, _) in classes
         indegrees[class_name] = 0
     end
-    
+
     for (class_name, adjacents) in graph
         for neighbor in adjacents
             indegrees[class_name] += 1
         end
     end
-    
+
     nodes_with_no_incoming_edges = [class]
-    cpl = [] 
+    cpl = []
     while (length(nodes_with_no_incoming_edges) > 0)
         node = pop!(nodes_with_no_incoming_edges)
         push!(cpl, node)
-    
+
         for neighbor in node.direct_superclasses
             indegrees[neighbor.name] -= 1
             if indegrees[neighbor.name] == 0
                 push!(nodes_with_no_incoming_edges, neighbor)
             end
-        end    
+        end
     end
-    
+
     cpl
 end
 
@@ -649,3 +632,32 @@ end
 @defclass(E, [C], [])
 @defclass(F, [C, E, D], [])
 
+
+
+## Multiple dispatch
+
+@defclass(Shape, [], [])
+@defclass(Device, [], [])
+@defgeneric draw(shape, device)
+@defclass(Line, [Shape], [from, to])
+@defclass(Circle, [Shape], [center, radius])
+@defclass(Screen, [Device], [])
+@defclass(Printer, [Device], [])
+@defmethod draw(shape::Line, device::Screen) = println("Drawing a Line on Screen")
+@defmethod draw(shape::Circle, device::Screen) = println("Drawing a Circle on Screen")
+@defmethod draw(shape::Line, device::Printer) = println("Drawing a Line on Printer")
+@defmethod draw(shape::Circle, device::Printer) = println("Drawing a Circle on Printer")
+let devices = [new(Screen), new(Printer)],
+    shapes = [new(Line), new(Circle)]
+
+    for device in devices
+        for shape in shapes
+            draw(shape, device)
+        end
+    end
+end
+
+# #Drawing a Line on Screen
+# #Drawing a Circle on Screen
+# #Drawing a Line on Printer
+# #Drawing a Circle on Printer 
