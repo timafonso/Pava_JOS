@@ -214,26 +214,6 @@ _bootstrap_class_getters_and_setters(GenericFunction, GENERIC_FUNCTION_SLOTS)
 _bootstrap_class_getters_and_setters(MultiMethod, MULTI_METHOD_SLOTS)
 
 ####################################################################
-
-function compute_cpl(class::Instance)
-    cpl = []
-    queue = [class]
-
-    while !isempty(queue)
-        value = popfirst!(queue)
-        if (value ∉ cpl)
-            push!(cpl, value)
-            for superclass in value.direct_superclasses
-                push!(queue, superclass)
-            end
-        end
-    end
-
-    cpl
-
-end
-
-####################################################################
 #                             METHODS                              #
 ####################################################################
 
@@ -317,8 +297,30 @@ add_method(allocate_instance, mm)
 mm = Instance(MultiMethod, [[Class], (cls) -> (Instance(cls)), allocate_instance])
 add_method(allocate_instance, mm)
 
+# COMPUTE CPL -------------------------------------------------------
+compute_cpl = Instance(GenericFunction, [:compute_cpl, [:class], Dict()])
+# Class 
+mm = Instance(MultiMethod, [[Class], function (class)
+                                        cpl = []
+                                        queue = [class]
+
+                                        while !isempty(queue)
+                                            value = popfirst!(queue)
+                                            if (value ∉ cpl)
+                                                push!(cpl, value)
+                                                for superclass in value.direct_superclasses
+                                                    push!(queue, superclass)
+                                                end
+                                            end
+                                        end
+
+                                        cpl
+end, compute_cpl])
+add_method(compute_cpl, mm)
+
 # COMPUTE GETTERS AND SETTERS -------------------------------------------------------
-compute_getter_and_setter = Instance(GenericFunction, [:compute_getter_and_setter, [:class, :slot, :idx], Dict()])
+compute_getter_and_setter = Instance(GenericFunction, 
+                                    [:compute_getter_and_setter, [:class, :slot, :idx], Dict()])
 # Class 
 mm = Instance(MultiMethod, [[Class, Top, Top], function (class, slot, idx)
         getter = (inst) -> (getfield(inst, :slots)[idx])
@@ -400,30 +402,6 @@ end
 
 
 ####################################################################
-
-####################################################################
-#                        PRE-DEFINED METHODS                       #
-####################################################################
-
-############################# Print ################################
-
-global print_object = new(GenericFunction, name=:print_object, args=[:obj, :io], methods=Dict())
-
-# Objects ----------------------------------------------------------
-create_method(print_object, [Object, Top], (obj, io) -> (print(io, "<$((class_of(obj)).name) $(string(objectid(obj), base=62))>")))
-
-# Classes ----------------------------------------------------------
-create_method(print_object, [Class, Top], (cls, io) -> (print(io, "<$(class_of(cls).name) $(cls.name)>")))
-
-# Generic Functions ------------------------------------------------
-create_method(print_object, [GenericFunction, Top], (gf, io) -> (print(io, "<GenericFunction $(gf.name) with $(length(gf.methods)) methods>")))
-
-# Multi Methods ----------------------------------------------------
-create_method(print_object, [MultiMethod, Top], (mm, io) -> (names = getproperty.(mm.specializers, :name); print(io, "<MultiMethod $(mm.generic_function.name)($(join(names, ", ")))>")))
-
-function Base.show(io::IO, obj::Instance)
-    print_object(obj, io)
-end
 
 ####################################################################
 #                               MACROS                             #
@@ -549,257 +527,125 @@ end
 @defbuiltinclass(Int64)
 @defbuiltinclass(String)
 
-####################################################################
-#                               TESTING                            #
-####################################################################
-
 
 @defmethod compute_slots(class::Class) =
     vcat(map(class_direct_slots, class_cpl(class))...)
 
 
-@defclass(Foo, [], [[a = 1], [b = 2]])
-@defclass(Bar, [], [[b = 3], [c = 4]])
-@defclass(FooBar, [Foo, Bar], [[a = 5], [d = 6]])
-@defclass(AvoidCollisionsClass, [Class], [])
+####################################################################
+#                        PRE-DEFINED METHODS                       #
+####################################################################
 
-@defmethod compute_slots(class::AvoidCollisionsClass) =
-    let slots = call_next_method(),
-        duplicates = symdiff(slots, unique(slots))
+############################# Print ################################
 
-        isempty(duplicates) ?
-        slots :
-        error("Multiple occurrences of slots: $(join(map(string, duplicates), ", "))")
-    end
+# Objects ----------------------------------------------------------
+@defmethod print_object(obj::Object, io::Top) =
+    print(io, "<$(class_name(class_of(obj))) $(string(objectid(obj), base=62))>")
 
-# @defclass(FooBar2, [Foo, Bar], [[a = 5], [d = 6]], metaclass = AvoidCollisionsClass)
+# Classes ----------------------------------------------------------
+@defmethod print_object(cls::Class, io::Top) =
+    print(io, "<$(class_of(cls).name) $(cls.name)>")
 
-#--------------------------------------------------------------------------
+# Generic Functions ------------------------------------------------
+@defmethod print_object(gf::GenericFunction, io::Top) =
+    print(io, "<GenericFunction $(gf.name) with $(length(gf.methods)) methods>")
 
-undo_trail = []
-store_previous(object, slot, value) = push!(undo_trail, (object, slot, value))
-current_state() = length(undo_trail)
-restore_state(state) =
-    while length(undo_trail) != state
-        restore(pop!(undo_trail)...)
-    end
-save_previous_value = true
-restore(object, slot, value) =
-    let previous_save_previous_value = save_previous_value
-        global save_previous_value = false
-        try
-            setproperty!(object, slot, value)
-        finally
-            global save_previous_value = previous_save_previous_value
+# Multi Methods ----------------------------------------------------
+@defmethod print_object(mm::MultiMethod, io::Top) = begin
+    names = getproperty.(mm.specializers, :name)
+    print(io, "<MultiMethod $(mm.generic_function.name)($(join(names, ", ")))>")
+end
+
+function Base.show(io::IO, obj::Instance)
+    print_object(obj, io)
+end
+
+
+####################################################################
+#                             Extensions                           #
+####################################################################
+
+@defclass(DylanClass, [Class], [])
+
+@defmethod compute_cpl_bfs(class::Class) = begin
+    cpl = []
+    queue = [class]
+
+    while !isempty(queue)
+        value = popfirst!(queue)
+        if (value ∉ cpl)
+            push!(cpl, value)
+            for superclass in value.direct_superclasses
+                push!(queue, superclass)
+            end
         end
     end
 
-@defclass(UndoableClass, [Class], [])
-
-@defmethod compute_getter_and_setter(class::UndoableClass, slot, idx) =
-    let (getter, setter) = call_next_method()
-        (getter,
-            (o, v) -> begin
-                if save_previous_value
-                    store_previous(o, slot, getter(o))
-                end
-                setter(o, v)
-            end)
-    end
-
-@defclass(Person, [],
-    [name, age, friend],
-    metaclass = UndoableClass)
-@defmethod print_object(p::Person, io) =
-    print(io, "[$(p.name), $(p.age)$(ismissing(p.friend) ? "" : " with friend $(p.friend)")]")
-
-p0 = new(Person, name="John", age=21)
-p1 = new(Person, name="Paul", age=23)
-#Paul has a friend named John
-p1.friend = p0
-println(p1) #[Paul,23 with friend [John,21]]
-state0 = current_state()
-#32 years later, John changed his name to 'Louis' and got a friend
-p0.age = 53
-p1.age = 55
-p0.name = "Louis"
-p0.friend = new(Person, name="Mary", age=19)
-println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
-state1 = current_state()
-#15 years later, John (hum, I mean 'Louis') died
-p1.age = 70
-p1.friend = missing
-println(p1) #[Paul,70]
-#Let's go back in time
-restore_state(state1)
-println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
-#and even earlier
-restore_state(state0)
-println(p1) #[Paul,23 with friend [John,21]]
-
-#--------------------------------------------------------------------------
-
-@defclass(CountingClass, [Class], [counter = 0])
-
-@defmethod allocate_instance(class::CountingClass) = begin
-    class.counter += 1
-    call_next_method()
+    cpl
 end
 
-#--------------------------------------------------------------------------
+@defmethod build_graph_util(class::Class, adj_list, classes) = begin
+    if(!haskey(classes, class.name))
+        classes[class.name] = class
+    end
+    for direct_superclass in class.direct_superclasses
+        if (!haskey(adj_list, direct_superclass.name))
+            adj_list[direct_superclass.name] = [class]
+        elseif (class ∉ adj_list[direct_superclass.name])
+            push!(adj_list[direct_superclass.name], class)
+        end
+        build_graph_util(direct_superclass, adj_list, classes)
+    end
+end
 
-# @defclass(UndoableCountingClass,
-#     [UndoableClass, CountingClass],
-#     [])
+@defmethod build_graph(class::DylanClass) = begin
+    adj_list = Dict()
+    adj_list[class.name] = []
+    
+    classes = Dict()
+    classes[class.name] = class
 
-# @defclass(UCerson, [],
-#     [name, age, friend],
-#     metaclass = UndoableCountingClass)
+    build_graph_util(class, adj_list, classes)
+    
+    (adj_list, classes)
+end
 
-# p0 = new(UCPerson, name="John", age=21)
+@defmethod compute_cpl(class::DylanClass) = begin
 
-#--------------------------------------------------------------------------
-
-
-@defclass(UndoableCollisionAvoidingCountingClass,
-    [UndoableClass, AvoidCollisionsClass, CountingClass],
-    [])
-@defclass(NamedThing, [], [name])
-# @defclass(Person, [NamedThing],
-#     [name, age, friend],
-#     metaclass = UndoableCollisionAvoidingCountingClass)
-@defclass(Person, [NamedThing],
-    [age, friend],
-    metaclass = UndoableCollisionAvoidingCountingClass)
-@defmethod print_object(p::Person, io) =
-    print(io, "[$(p.name), $(p.age)$(ismissing(p.friend) ? "" : " with friend $(p.friend)")]")
-
-p0 = new(Person, name="John", age=21)
-p1 = new(Person, name="Paul", age=23)
-#Paul has a friend named John
-p1.friend = p0
-println(p1) #[Paul,23 with friend [John,21]]
-state0 = current_state()
-#32 years later, John changed his name to 'Louis' and got a friend
-p0.age = 53
-p1.age = 55
-p0.name = "Louis"
-p0.friend = new(Person, name="Mary", age=19)
-println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
-state1 = current_state()
-#15 years later, John (hum, I mean 'Louis') died
-p1.age = 70
-p1.friend = missing
-println(p1) #[Paul,70]
-#Let's go back in time
-restore_state(state1)
-println(p1) #[Paul,55 with friend [Louis,53 with friend [Mary,19]]]
-#and even earlier
-restore_state(state0)
-println(p1) #[Paul,23 with friend [John,21]]
-
-Person.counter
-
-
-class_of(1)
-class_of("Foo")
-
-@defmethod add(a::_Int64, b::_Int64) = a + b
-@defmethod add(a::_String, b::_String) = a * b
-
-add(1, 3)
-add("Foo", "Bar")
-#--------------------------------------------------------------------------
-
-# @defclass(ComplexNumber, [], [real, imag])
-# c = new(ComplexNumber, real=1, imag=1)
-
-# @defmethod add(a::ComplexNumber, b::ComplexNumber) =
-#     new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
-
-# @defclass(MoreComplexNumber, [ComplexNumber], [morereal])
-# mc = new(MoreComplexNumber, morereal=44, real=1, imag=1)
-
-# @defclass(CountingClass, [Class], [[counter = 0]])
-
-# @defmethod allocate_instance(class::CountingClass) = begin
-#     class.counter += 1
-#     call_next_method()
-# end
-
-#@defclass(CountablePerson, [], [age], metaclass = CountingClass)
-
-#cp = new(CountablePerson, age=1)
-
-# show("end")
+    graph, classes = build_graph(class)
+    
+    indegrees = Dict()
+    for (class_name, _) in classes
+        indegrees[class_name] = 0
+    end
+    
+    for (class_name, adjacents) in graph
+        for neighbor in adjacents
+            indegrees[class_name] += 1
+        end
+    end
+    
+    nodes_with_no_incoming_edges = [class]
+    cpl = [] 
+    while (length(nodes_with_no_incoming_edges) > 0)
+        node = pop!(nodes_with_no_incoming_edges)
+        push!(cpl, node)
+    
+        for neighbor in node.direct_superclasses
+            indegrees[neighbor.name] -= 1
+            if indegrees[neighbor.name] == 0
+                push!(nodes_with_no_incoming_edges, neighbor)
+            end
+        end    
+    end
+    
+    cpl
+end
 
 
-# #--------------------------------------------------------------------------
 
+@defclass(C, [], [])
+@defclass(D, [C], [])
+@defclass(E, [C], [])
+@defclass(F, [C, E, D], [])
 
-# @defclass(Person, [], [[name, reader = get_name, writer = set_name!],
-#     [age, reader = get_age, writer = set_age!, initform = 2],
-#     [friend = "Jorge", reader = get_friend, writer = set_friend!]])
-
-
-# p = new(Person, name='a')
-# display(p.slots)
-
-# @defgeneric add(a, b)
-# @defmethod add(a::ComplexNumber, b::ComplexNumber) =
-#     new(ComplexNumber, real=(a.real + b.real), imag=(a.imag + b.imag))
-
-# show(add.methods)
-# c1 = new(ComplexNumber, real=1, imag=2)
-# c2 = new(ComplexNumber, real=1, imag=2)
-# add(c1, c2)
-
-# #--------------------------------------------------------------------------
-
-# @macroexpand @defbuiltinclass(Int64)
-# @defbuiltinclass(Int64)
-# @defbuiltinclass(String)
-
-
-# class_of(1)
-# class_of("Dragon")
-
-
-# #--------------------------------------------------------------------------
-
-# @macroexpand @defclass(MoreComplexNumber, [ComplexNumber], [superreal])
-# @defclass(MoreComplexNumber, [ComplexNumber], [superreal])
-# @defclass(MoreComplexNumber2, [MoreComplexNumber, ComplexNumber], [superreal])
-
-# class_direct_slots(MoreComplexNumber2)
-
-
-# ####################################################################
-# #                       Expected Result                            #
-# ####################################################################
-
-# @defclass(Shape, [], [])
-# @defclass(Device, [], [])
-# @defgeneric draw(shape, device)
-# @defclass(Line, [Shape], [from, to])
-# @defclass(Circle, [Shape], [center, radius])
-# @defclass(Screen, [Device], [])
-# @defclass(Printer, [Device], [])
-# @defmethod draw(shape::Line, device::Screen) = println("Drawing a Line on Screen")
-# @defmethod draw(shape::Circle, device::Screen) = println("Drawing a Circle on Screen")
-# @defmethod draw(shape::Line, device::Printer) = println("Drawing a Line on Printer")
-# @defmethod draw(shape::Circle, device::Printer) = println("Drawing a Circle on Printer")
-# let devices = [new(Screen), new(Printer)],
-#     shapes = [new(Line), new(Circle)]
-
-#     for device in devices
-#         for shape in shapes
-#             draw(shape, device)
-#         end
-#     end
-# end
-
-# #Drawing a Line on Screen
-# #Drawing a Circle on Screen
-# #Drawing a Line on Printer
-# #Drawing a Circle on Printer 
