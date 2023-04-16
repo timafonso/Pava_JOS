@@ -94,7 +94,7 @@ push!(GenericFunction.slots, Dict{Symbol,Any}())                  # setters
 
 MultiMethod = Instance(Class, [MM_SLOTS, :MultiMethod, [Object]])
 push!(MultiMethod.slots, [MultiMethod, Object, Top])    #cpl
-push!(MultiMethod.slots, [missing, missing, missing])   #initforms
+push!(MultiMethod.slots, [missing, missing, missing, missing])   #initforms
 push!(MultiMethod.slots, Dict{Symbol,Any}())                    # getters
 push!(MultiMethod.slots, Dict{Symbol,Any}())                    # setters
 
@@ -295,10 +295,8 @@ function call_effective_method(generic_f, args)
     # check if cached first
     cached_methods = get_cached_method(generic_f, arg_types)
     if (cached_methods !== missing)
-        println("USING CACHED METHODS")
         best_methods = cached_methods
     else
-        println("COMPUTING METHODS")
         # compute effective methods
         applicable_methods = get_applicable_methods(generic_f, arg_types)
         (length(applicable_methods) == 0) && no_applicable_method(generic_f, args)
@@ -317,7 +315,6 @@ function call_effective_method(generic_f, args)
 
     # primary
     primary_methods = filter((x) -> getproperty(x, MM_QUALIFIER) == MM_QUALIFIER_PRIMARY, best_methods)
-    println("Primary methods $(show.(getproperty.(primary_methods, MM_SPECIALIZERS)))")
     applicable_method_stack_backup = applicable_method_stack
     global applicable_method_stack = MethodCallStack(primary_methods, args, generic_f)
     result = call_next_method()
@@ -351,7 +348,7 @@ add_method(allocate_instance, mm)
 # COMPUTE CPL -------------------------------------------------------
 compute_cpl = Instance(GenericFunction, [:compute_cpl, [:class], Dict{Tuple,Any}(), Dict{Tuple,Vector}()])
 # Class 
-mm = Instance(MultiMethod, [[Class], function (class)
+mm = Instance(MultiMethod, [[Class], MM_QUALIFIER_PRIMARY, function (class)
         cpl = []
         queue = [class]
 
@@ -465,6 +462,7 @@ end
 macro defmethod(qualifier, method)
     name = method.args[1].args[1]
     qualifier = Expr(:quote, qualifier)
+    generic_function_name = Expr(:quote, name)
 
     prototype = method.args[1]
     body = method.args[2]
@@ -483,8 +481,9 @@ macro defmethod(qualifier, method)
     end
 
     quote
-        (!@isdefined $name) && @defgeneric $name($arguments...)
-
+        if (!@isdefined $name)
+            global $name = new(GenericFunction, name=$generic_function_name, args=$arguments)
+        end
         create_method($name, [$(specializers...),], ($(arguments...),) -> $body, $qualifier)
     end
 end
@@ -602,46 +601,3 @@ end
 function Base.show(io::IO, obj::Instance)
     print_object(obj, io)
 end
-
-####################################################################
-#                               TESTING                            #
-####################################################################
-
-## Testing method combination
-
-@defclass(Foo, [], [a = 1])
-
-# @defmethod before bar(c::Foo) = display("before")
-# @defmethod bar(c::Foo) = display("primary")
-# @defmethod after bar(c::Foo) = display("after")
-
-# f = new(Foo)
-# bar(f)
-
-## Multiple dispatch
-
-# @defclass(Shape, [], [])
-# @defclass(Device, [], [])
-# @defgeneric draw(shape, device)
-# @defclass(Line, [Shape], [from, to])
-# @defclass(Circle, [Shape], [center, radius])
-# @defclass(Screen, [Device], [])
-# @defclass(Printer, [Device], [])
-# @defmethod draw(shape::Line, device::Screen) = println("Drawing a Line on Screen")
-# @defmethod draw(shape::Circle, device::Screen) = println("Drawing a Circle on Screen")
-# @defmethod draw(shape::Line, device::Printer) = println("Drawing a Line on Printer")
-# @defmethod draw(shape::Circle, device::Printer) = println("Drawing a Circle on Printer")
-# let devices = [new(Screen), new(Printer)],
-#     shapes = [new(Line), new(Circle)]
-
-#     for device in devices
-#         for shape in shapes
-#             draw(shape, device)
-#         end
-#     end
-# end
-
-# #Drawing a Line on Screen
-# #Drawing a Circle on Screen
-# #Drawing a Line on Printer
-# #Drawing a Circle on Printer 

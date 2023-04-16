@@ -657,6 +657,15 @@ let devices = [new(Screen), new(Printer)],
     end
 end
 
+@defclass(Foo, [], [a = 1])
+
+@defgeneric bar(c)
+# @defmethod before bar(c::Foo) = display("before")
+@defmethod bar(c::Foo) = display("primary")
+
+show(bar.methods)
+# @defmethod after ba
+
 # #Drawing a Line on Screen
 # #Drawing a Circle on Screen
 # #Drawing a Line on Printer
